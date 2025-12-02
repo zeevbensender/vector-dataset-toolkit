@@ -27,6 +27,7 @@ from ..utils.io import (
     FBINConverter,
     FBINReader,
     HDF5Reader,
+    HDF5Unwrapper,
     HDF5Wrapper,
     IBINReader,
     NPYReader,
@@ -36,6 +37,7 @@ from ..views.converter_view import ConverterView
 from ..views.inspector_view import InspectorView
 from ..views.logs_view import LogsView
 from ..views.merge_view import MergeView
+from ..views.unwrap_view import UnwrapView
 from ..views.wrap_view import WrapView
 from ..views.settings_view import SettingsView
 from ..workers.worker import Worker, WorkerManager
@@ -125,6 +127,7 @@ class MainWindow(QMainWindow):
             ("Inspector", "Inspect file metadata"),
             ("Converter", "Convert between formats"),
             ("Wrap", "Wrap FBIN/IBIN into HDF5"),
+            ("Unwrap", "Extract datasets from HDF5"),
             ("Merge", "Merge shard files"),
             ("Logs", "View application logs"),
             ("Settings", "Application settings"),
@@ -150,6 +153,9 @@ class MainWindow(QMainWindow):
 
         self.wrap_view = WrapView()
         self.view_stack.addWidget(self.wrap_view)
+
+        self.unwrap_view = UnwrapView()
+        self.view_stack.addWidget(self.unwrap_view)
 
         self.merge_view = MergeView()
         self.view_stack.addWidget(self.merge_view)
@@ -575,10 +581,122 @@ class MainWindow(QMainWindow):
         """Handle merge error."""
         self.progress_bar.setValue(0)
         self.progress_label.setText("Error")
-        
+
         self.merge_view.merge_error(str(error))
         self.log(f"Merge error: {error}", "ERROR")
         self.status_bar.showMessage(f"Error: {error}")
+
+    # Unwrap HDF5 into FBIN/IBIN outputs
+    def scan_hdf5_for_unwrap(self, file_path: str, max_vectors: int | None) -> None:
+        """Scan an HDF5 file for unwrap metadata."""
+
+        self.log(f"Scanning HDF5 for unwrap: {file_path}")
+        self.progress_label.setText("Scanning HDF5…")
+        self.progress_bar.setRange(0, 0)
+        self.unwrap_view.toggle_busy(True)
+
+        log_cb = lambda msg, level="INFO": (
+            self.log(msg, level),
+            self.unwrap_view.append_log(msg, level),
+        )
+        unwrapper = HDF5Unwrapper(
+            max_vectors=max_vectors or None,
+            log_callback=log_cb,
+        )
+
+        def do_scan(progress_callback=None):
+            return unwrapper.scan(file_path)
+
+        self._current_worker = self._worker_manager.run_task(
+            do_scan,
+            on_result=self._on_unwrap_scan_complete,
+            on_error=lambda e, tb: self._on_unwrap_error(e, tb, during_scan=True),
+        )
+
+    def extract_hdf5_datasets(
+        self, file_path: str, output_dir: str | None, max_vectors: int | None
+    ) -> None:
+        """Extract HDF5 datasets into base/queries/gt outputs."""
+
+        self.log(
+            f"Extracting datasets from {file_path} -> {output_dir or Path(file_path).parent}"
+        )
+        self.progress_label.setText("Extracting…")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.unwrap_view.toggle_busy(True)
+
+        log_cb = lambda msg, level="INFO": (
+            self.log(msg, level),
+            self.unwrap_view.append_log(msg, level),
+        )
+        unwrapper = HDF5Unwrapper(
+            max_vectors=max_vectors or None,
+            progress_callback=None,
+            log_callback=log_cb,
+        )
+        self._cancel_callback = unwrapper.cancel
+
+        def do_extract(progress_callback=None):
+            unwrapper.progress_callback = progress_callback
+            return unwrapper.extract(file_path, output_dir)
+
+        self._current_worker = self._worker_manager.run_task(
+            do_extract,
+            on_progress=self._on_unwrap_progress,
+            on_result=self._on_unwrap_complete,
+            on_error=self._on_unwrap_error,
+        )
+
+    def _on_unwrap_scan_complete(self, metadata: dict) -> None:
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Ready")
+        self.unwrap_view.toggle_busy(False)
+
+        self.unwrap_view.display_metadata(metadata)
+        self.log("HDF5 scan complete for unwrap")
+        self.status_bar.showMessage("HDF5 scan complete")
+
+    def _on_unwrap_progress(self, current: int, total: int) -> None:
+        if total > 0:
+            percent = int((current / total) * 100)
+            self.progress_bar.setValue(percent)
+            self.progress_label.setText(f"Extracting… {percent}%")
+
+    def _on_unwrap_complete(self, result: dict) -> None:
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Ready")
+        self.unwrap_view.toggle_busy(False)
+        self._cancel_callback = None
+
+        self.unwrap_view.display_summary(result)
+        base_shape = result.get("vectors", {}).get("base")
+        query_shape = result.get("vectors", {}).get("queries")
+        self.unwrap_view.append_log("Extraction completed successfully.")
+        self.log("Extraction completed successfully.")
+        if base_shape or query_shape:
+            self.log(
+                f"Extracted base={base_shape} queries={query_shape}",
+            )
+        self.status_bar.showMessage("Extraction completed successfully")
+
+    def _on_unwrap_error(
+        self, error: Exception, traceback_str: str, during_scan: bool = False
+    ) -> None:
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Error")
+        self.unwrap_view.toggle_busy(False)
+        self._cancel_callback = None
+
+        self.unwrap_view.append_log(traceback_str, "ERROR")
+        self.log(f"Unwrap error: {error}", "ERROR")
+        self.status_bar.showMessage(f"Error: {error}")
+        if during_scan:
+            QMessageBox.critical(self, "Scan Error", f"Failed to scan HDF5 file:\n{error}")
+        else:
+            self.unwrap_view.extraction_error(str(error))
 
     # Wrap FBIN/IBIN into HDF5
     def validate_wrap_inputs(

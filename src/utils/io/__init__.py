@@ -2,8 +2,10 @@
 
 from .npy_reader import NPYReader
 from .hdf5_reader import HDF5Reader
+from .hdf5_unwrapper import HDF5Unwrapper
 from .fbin_reader import FBINReader, FBIN_HEADER_SIZE
 from .ibin_reader import IBINReader, IBIN_HEADER_SIZE
+from .ibin_writer import IBINWriter, write_ibin
 from .fbin_writer import FBINWriter, write_fbin
 from .converter import Converter
 from .fbin_converter import (
@@ -24,10 +26,13 @@ from .shard_merger import (
 __all__ = [
     "NPYReader",
     "HDF5Reader",
+    "HDF5Unwrapper",
     "FBINReader",
     "FBIN_HEADER_SIZE",
     "IBINReader",
     "IBIN_HEADER_SIZE",
+    "IBINWriter",
+    "write_ibin",
     "FBINWriter",
     "write_fbin",
     "Converter",
