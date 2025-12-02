@@ -167,6 +167,10 @@ Select multiple FBIN shard files of the same dataset and merge them into a singl
 - ✅ Milestone B — Basic App Layout
 - ✅ Milestone C — Open FBIN and Display Metadata
 - ✅ Milestone D — Open H5/HDF5 and Display Metadata
+- ✅ Milestone E — Merge Multiple FBIN Shards Into One
 
-**Next Milestone:**
-- ⬜ Milestone E — Merge Multiple FBIN Shards Into One
+**Additional Features Implemented:**
+- ✅ FBIN Writer with atomic writes and checksum support
+- ✅ FBIN ↔ NPY and FBIN → HDF5 conversions
+- ✅ Advanced Inspector UI with configurable sampling
+- ✅ IBIN enhanced sampling (random, strided)

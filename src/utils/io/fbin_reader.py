@@ -154,7 +154,7 @@ class FBINReader:
         return self._array
 
     def sample(self, start: int = 0, count: int = 10) -> np.ndarray:
-        """Sample vectors from the dataset.
+        """Sample vectors from the dataset (sequential).
         
         Args:
             start: Starting index for sampling.
@@ -165,6 +165,52 @@ class FBINReader:
         """
         array = self.load()
         return np.array(array[start:start + count])  # Copy from mmap
+
+    def sample_random(
+        self, count: int = 10, seed: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Sample random vectors from the dataset.
+        
+        Args:
+            count: Number of vectors to sample.
+            seed: Random seed for reproducibility (None for random).
+            
+        Returns:
+            Tuple of (indices, vectors):
+            - indices: 1D array of sampled indices
+            - vectors: 2D array of sampled vectors
+        """
+        metadata = self.get_metadata()
+        total = metadata["vector_count"]
+        
+        rng = np.random.default_rng(seed)
+        indices = rng.choice(total, size=min(count, total), replace=False)
+        indices = np.sort(indices)  # Sort for sequential access
+        
+        array = self.load()
+        vectors = np.array(array[indices])  # Copy from mmap
+        
+        return indices, vectors
+
+    def sample_strided(self, stride: int = 10, max_count: int | None = None) -> np.ndarray:
+        """Sample vectors at regular intervals.
+        
+        Args:
+            stride: Step size between sampled indices.
+            max_count: Maximum number of vectors to return (None for all).
+            
+        Returns:
+            NumPy array containing the sampled vectors.
+        """
+        metadata = self.get_metadata()
+        total = metadata["vector_count"]
+        
+        indices = np.arange(0, total, stride)
+        if max_count is not None:
+            indices = indices[:max_count]
+        
+        array = self.load()
+        return np.array(array[indices])  # Copy from mmap
 
     def get_vector(self, index: int) -> np.ndarray:
         """Get a single vector by index.

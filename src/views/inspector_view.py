@@ -102,7 +102,8 @@ class InspectorView(QWidget):
         # Advanced placeholder
         self.advanced_btn = QPushButton("Advanced Inspector...")
         self.advanced_btn.setEnabled(False)
-        self.advanced_btn.setToolTip("Coming in a future milestone")
+        self.advanced_btn.setToolTip("Open detailed inspector with advanced sampling options")
+        self.advanced_btn.clicked.connect(self._on_open_advanced_inspector)
         layout.addWidget(self.advanced_btn)
 
         layout.addStretch()
@@ -265,3 +266,27 @@ class InspectorView(QWidget):
     def set_reader(self, reader: Any) -> None:
         """Set the current reader for the loaded file."""
         self._current_reader = reader
+
+    def _on_open_advanced_inspector(self) -> None:
+        """Open the Advanced Inspector dialog."""
+        if not self._current_file or not self._current_reader:
+            return
+
+        from .advanced_inspector import AdvancedInspectorDialog
+
+        # Get current metadata
+        try:
+            metadata = self._current_reader.get_metadata()
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Error",
+                f"Failed to get metadata: {e}"
+            )
+            return
+
+        dialog = AdvancedInspectorDialog(
+            self.window(),
+            metadata,
+            self._current_file,
+        )
+        dialog.exec()

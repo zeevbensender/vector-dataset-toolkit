@@ -24,10 +24,12 @@ from PySide6.QtWidgets import (
 
 from ..utils.io import (
     Converter,
+    FBINConverter,
     FBINReader,
     HDF5Reader,
     IBINReader,
     NPYReader,
+    ShardMerger,
 )
 from ..views.converter_view import ConverterView
 from ..views.inspector_view import InspectorView
@@ -381,6 +383,28 @@ class MainWindow(QMainWindow):
                     output_path,
                     dataset_path=options.get("dataset_path", "vectors"),
                 )
+            elif input_suffix == ".fbin" and output_suffix == ".npy":
+                fbin_converter = FBINConverter(
+                    chunk_size=options.get("chunk_size", 10000),
+                    progress_callback=progress_callback,
+                )
+                return fbin_converter.fbin_to_npy(input_path, output_path)
+            elif input_suffix == ".npy" and output_suffix == ".fbin":
+                fbin_converter = FBINConverter(
+                    chunk_size=options.get("chunk_size", 10000),
+                    progress_callback=progress_callback,
+                )
+                return fbin_converter.npy_to_fbin(input_path, output_path)
+            elif input_suffix == ".fbin" and output_suffix in (".h5", ".hdf5"):
+                fbin_converter = FBINConverter(
+                    chunk_size=options.get("chunk_size", 10000),
+                    progress_callback=progress_callback,
+                )
+                return fbin_converter.fbin_to_hdf5(
+                    input_path, output_path,
+                    dataset_name=options.get("dataset_name", "vectors"),
+                    compression=options.get("compression"),
+                )
             else:
                 raise ValueError(
                     f"Unsupported conversion: {input_suffix} -> {output_suffix}"
@@ -424,6 +448,125 @@ class MainWindow(QMainWindow):
         if self._current_worker:
             self._current_worker.cancel()
             self.log("Operation cancelled", "WARNING")
+
+    # Shard validation and merge methods
+    def validate_shards(self, shard_paths: list[str]) -> None:
+        """Validate shard files for compatibility.
+        
+        Args:
+            shard_paths: List of paths to shard files.
+        """
+        self.log(f"Validating {len(shard_paths)} shards...")
+
+        def do_validate(progress_callback=None):
+            merger = ShardMerger()
+            infos = merger.validate_shards(shard_paths)
+            return [info.to_dict() for info in infos]
+
+        self._current_worker = self._worker_manager.run_task(
+            do_validate,
+            on_result=self._on_validate_complete,
+            on_error=self._on_validate_error,
+        )
+
+    def _on_validate_complete(self, result: list[dict]) -> None:
+        """Handle shard validation completion."""
+        self.merge_view.display_shard_validation(result)
+        compatible = sum(1 for r in result if r.get("validation_result") == "compatible")
+        self.log(f"Validated {len(result)} shards: {compatible} compatible")
+
+    def _on_validate_error(self, error: Exception, traceback_str: str) -> None:
+        """Handle validation error."""
+        self.log(f"Validation error: {error}", "ERROR")
+
+    def preview_merge(self, shard_paths: list[str], output_format: str) -> None:
+        """Preview merge operation (dry run).
+        
+        Args:
+            shard_paths: List of paths to shard files.
+            output_format: Output format ("fbin" or "npy").
+        """
+        self.log("Generating merge preview...")
+
+        def do_preview(progress_callback=None):
+            merger = ShardMerger()
+            preview = merger.preview_merge(shard_paths, output_format)
+            return preview.to_dict()
+
+        self._current_worker = self._worker_manager.run_task(
+            do_preview,
+            on_result=self._on_preview_complete,
+            on_error=self._on_preview_error,
+        )
+
+    def _on_preview_complete(self, result: dict) -> None:
+        """Handle preview completion."""
+        self.merge_view.display_preview(result)
+        self.log(f"Preview: {result.get('total_vectors', 0):,} vectors from {len(result.get('shards', []))} shards")
+
+    def _on_preview_error(self, error: Exception, traceback_str: str) -> None:
+        """Handle preview error."""
+        self.log(f"Preview error: {error}", "ERROR")
+
+    def merge_shards(
+        self, shard_paths: list[str], output_path: str, options: dict
+    ) -> None:
+        """Merge shard files into a single file.
+        
+        Args:
+            shard_paths: List of paths to shard files.
+            output_path: Path for the output file.
+            options: Merge options (output_format, chunk_size, compute_checksum).
+        """
+        self.log(f"Merging {len(shard_paths)} shards -> {output_path}")
+        self.progress_label.setText("Merging...")
+        self.progress_bar.setValue(0)
+
+        def do_merge(progress_callback=None):
+            merger = ShardMerger(
+                chunk_size=options.get("chunk_size", 10000),
+                progress_callback=progress_callback,
+                log_callback=lambda msg: None,  # Silent logging
+            )
+            return merger.merge(
+                shard_paths,
+                output_path,
+                output_format=options.get("output_format", "fbin"),
+                compute_checksum=options.get("compute_checksum", False),
+            )
+
+        self._current_worker = self._worker_manager.run_task(
+            do_merge,
+            on_progress=self._on_merge_progress,
+            on_result=self._on_merge_complete,
+            on_error=self._on_merge_error,
+        )
+
+    def _on_merge_progress(self, current: int, total: int) -> None:
+        """Handle merge progress update."""
+        if total > 0:
+            percent = int((current / total) * 100)
+            self.progress_bar.setValue(percent)
+            self.progress_label.setText(f"Merging... {percent}%")
+            self.merge_view.update_progress(current, total)
+
+    def _on_merge_complete(self, result: dict) -> None:
+        """Handle merge completion."""
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Ready")
+        
+        self.merge_view.merge_complete(result)
+        self.log(f"Merge complete: {result.get('total_vectors', 0):,} vectors")
+        self.status_bar.showMessage("Merge complete")
+
+    def _on_merge_error(self, error: Exception, traceback_str: str) -> None:
+        """Handle merge error."""
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Error")
+        
+        self.merge_view.merge_error(str(error))
+        self.log(f"Merge error: {error}", "ERROR")
+        self.status_bar.showMessage(f"Error: {error}")
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
