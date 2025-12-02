@@ -12,6 +12,7 @@ from .fbin_converter import (
     convert_npy_to_fbin,
     convert_fbin_to_hdf5,
 )
+from .hdf5_wrapper import HDF5Wrapper
 from .shard_merger import (
     ShardMerger,
     ShardInfo,
@@ -34,6 +35,7 @@ __all__ = [
     "convert_fbin_to_npy",
     "convert_npy_to_fbin",
     "convert_fbin_to_hdf5",
+    "HDF5Wrapper",
     "ShardMerger",
     "ShardInfo",
     "ShardValidationResult",
