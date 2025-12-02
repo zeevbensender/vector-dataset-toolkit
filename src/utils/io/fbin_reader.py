@@ -3,15 +3,23 @@
 This module provides functionality to read FBIN (binary float32 vector) files.
 FBIN format is commonly used for storing dense vector embeddings.
 
-FBIN Format Specification:
+FBIN Format Specification (based on ANN Benchmarks convention):
 - Header: 8 bytes
   - Bytes 0-3: uint32 little-endian - number of vectors
   - Bytes 4-7: uint32 little-endian - dimension of each vector
 - Data: (num_vectors * dimension * 4) bytes
   - float32 little-endian values, row-major order
 
-TODO: This implementation is based on the common FBIN format used in ANN benchmarks.
-If different variants exist, additional format detection may be needed.
+Format Notes:
+- This implementation follows the FBIN format used by ANN Benchmarks
+  (https://github.com/erikbern/ann-benchmarks) and Big ANN Benchmarks.
+- Some datasets may use big-endian byte order (rare but possible).
+- Some variants may include additional metadata in the header.
+
+TODOs for M2:
+- Add endianness detection by checking if dimension value seems reasonable.
+- Add support for detecting float16/float64 variants if header values seem invalid.
+- Consider adding file magic number validation for stricter format checking.
 """
 
 import struct
@@ -33,11 +41,16 @@ class FBINReader:
     - Memory-mapped reading for large files
     - Sequential and random access to vectors
     
-    Assumptions/TODOs:
-    - Assumes standard FBIN format with 8-byte header (uint32 count, uint32 dim)
-    - Assumes float32 data in little-endian format
-    - Does not validate data integrity beyond basic header parsing
-    - TODO: Add support for detecting alternative FBIN variants if they exist
+    Assumptions:
+    - Standard FBIN format with 8-byte header (uint32 count, uint32 dim)
+    - float32 data in little-endian byte order
+    - Row-major vector storage
+    
+    Known Limitations (TODOs for M2):
+    - No endianness detection (assumes little-endian)
+    - No support for float16/float64 variants
+    - No checksum or magic number validation
+    - File size validation only warns, does not reject mismatched files
     """
 
     def __init__(self, file_path: str | Path, mmap_mode: bool = True) -> None:

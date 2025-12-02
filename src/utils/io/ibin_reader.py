@@ -3,16 +3,24 @@
 This module provides functionality to read IBIN (binary int32 vector) files.
 IBIN format is commonly used for storing ground truth indices in ANN benchmarks.
 
-IBIN Format Specification:
+IBIN Format Specification (based on ANN Benchmarks convention):
 - Header: 8 bytes
   - Bytes 0-3: uint32 little-endian - number of vectors/queries
   - Bytes 4-7: uint32 little-endian - number of neighbors per query (k)
 - Data: (num_vectors * k * 4) bytes
   - int32 little-endian values, row-major order
 
-TODO: This implementation is based on the common IBIN format used in ANN benchmarks.
-The format typically stores ground truth neighbor indices for each query.
-If different variants exist, additional format detection may be needed.
+Format Notes:
+- This implementation follows the IBIN format used by ANN Benchmarks for
+  storing ground truth nearest neighbor indices.
+- Each row contains k neighbor indices for one query vector.
+- Indices typically reference vectors in a corresponding FBIN file.
+- Some datasets may use uint32 instead of int32 (semantically equivalent for indices).
+
+TODOs for M2:
+- Add validation to check IBIN row count matches query count in corresponding FBIN.
+- Add endianness detection for datasets from different sources.
+- Consider adding API to associate IBIN ground truth with its FBIN dataset.
 """
 
 import struct
@@ -34,12 +42,16 @@ class IBINReader:
     - Memory-mapped reading for large files
     - Sequential and random access to index vectors
     
-    Assumptions/TODOs:
-    - Assumes standard IBIN format with 8-byte header (uint32 count, uint32 k)
-    - Assumes int32 data in little-endian format
+    Assumptions:
+    - Standard IBIN format with 8-byte header (uint32 count, uint32 k)
+    - int32 data in little-endian byte order
     - Typically used for ground truth neighbor indices
-    - TODO: Add support for detecting alternative IBIN variants if they exist
-    - TODO: Validate relationship between IBIN and corresponding FBIN files
+    
+    Known Limitations (TODOs for M2):
+    - No endianness detection (assumes little-endian)
+    - No validation against corresponding FBIN dataset
+    - No support for variable-k formats (where each query has different k)
+    - File size validation only warns, does not reject mismatched files
     """
 
     def __init__(self, file_path: str | Path, mmap_mode: bool = True) -> None:
