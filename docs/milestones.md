@@ -6,7 +6,7 @@ All milestones include UI layout requirements and acceptance criteria.
 
 ---
 
-# Milestone A — “Hello World” Desktop App (Ubuntu X11)
+# ✅ Milestone A — “Hello World” Desktop App (Ubuntu X11)
 
 ## Goal
 Create a minimal PySide6 application that runs on Ubuntu X11 with a basic window and no functional logic.
@@ -24,7 +24,7 @@ Create a minimal PySide6 application that runs on Ubuntu X11 with a basic window
 
 ---
 
-# Milestone B — Basic App Layout (Menus + Sidebar + Empty Views)
+# ✅ Milestone B — Basic App Layout (Menus + Sidebar + Empty Views)
 
 ## Goal
 Create the structural skeleton of the UI.
@@ -62,7 +62,7 @@ Create the structural skeleton of the UI.
 
 ---
 
-# Milestone C — Open FBIN and Display Metadata (Minimal Table)
+# ✅ Milestone C — Open FBIN and Display Metadata (Minimal Table)
 
 ## Goal
 Implement ability to select an `.fbin` file, parse minimal metadata, and display it.
@@ -90,7 +90,7 @@ Implement ability to select an `.fbin` file, parse minimal metadata, and display
 
 ---
 
-# Milestone D — Open H5/HDF5 and Display Metadata
+# ✅ Milestone D — Open H5/HDF5 and Display Metadata
 
 ## Goal
 Add support for `.h5` or `.hdf5` files, including wrapped datasets (dbpedia format etc.).
@@ -157,3 +157,16 @@ Select multiple FBIN shard files of the same dataset and merge them into a singl
 - Avoid UI freezes.
 - Every milestone should be easy to extend for future features.
 
+
+---
+
+# Current Status
+
+**Completed Milestones:**
+- ✅ Milestone A — "Hello World" Desktop App
+- ✅ Milestone B — Basic App Layout
+- ✅ Milestone C — Open FBIN and Display Metadata
+- ✅ Milestone D — Open H5/HDF5 and Display Metadata
+
+**Next Milestone:**
+- ⬜ Milestone E — Merge Multiple FBIN Shards Into One
