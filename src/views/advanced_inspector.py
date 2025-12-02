@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -456,8 +458,6 @@ class AdvancedInspectorDialog(QDialog):
 
     def _display_sample(self, data, indices=None) -> None:
         """Display sampled data in the preview."""
-        import numpy as np
-        
         self._sample_data = data
         
         lines = []

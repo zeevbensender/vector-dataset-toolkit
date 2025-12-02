@@ -6,6 +6,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -478,7 +479,6 @@ File Size: {result.get('file_size_bytes', 0) / (1024*1024):.2f} MB
         if not self._preview_result:
             return
 
-        from PySide6.QtWidgets import QApplication
         clipboard = QApplication.clipboard()
         clipboard.setText(json.dumps(self._preview_result, indent=2, default=str))
         self.log_text.append("Preview copied to clipboard")
