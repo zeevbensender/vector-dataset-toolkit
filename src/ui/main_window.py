@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..utils.dataset_scaler import DatasetScaler
 from ..utils.io import (
     Converter,
     FBINConverter,
@@ -36,6 +37,7 @@ from ..views.converter_view import ConverterView
 from ..views.inspector_view import InspectorView
 from ..views.logs_view import LogsView
 from ..views.merge_view import MergeView
+from ..views.scale_view import ScaleView
 from ..views.wrap_view import WrapView
 from ..views.settings_view import SettingsView
 from ..workers.worker import Worker, WorkerManager
@@ -125,6 +127,7 @@ class MainWindow(QMainWindow):
             ("Inspector", "Inspect file metadata"),
             ("Converter", "Convert between formats"),
             ("Wrap", "Wrap FBIN/IBIN into HDF5"),
+            ("Scale", "Scale HDF5 datasets"),
             ("Merge", "Merge shard files"),
             ("Logs", "View application logs"),
             ("Settings", "Application settings"),
@@ -150,6 +153,9 @@ class MainWindow(QMainWindow):
 
         self.wrap_view = WrapView()
         self.view_stack.addWidget(self.wrap_view)
+
+        self.scale_view = ScaleView()
+        self.view_stack.addWidget(self.scale_view)
 
         self.merge_view = MergeView()
         self.view_stack.addWidget(self.merge_view)
@@ -673,6 +679,61 @@ class MainWindow(QMainWindow):
         self._cancel_callback = None
         self.wrap_view.wrap_error(str(error))
         self.log(f"Wrap error: {error}", "ERROR")
+        self.status_bar.showMessage(f"Error: {error}")
+
+    # Scale dataset operations
+    def scale_dataset(self, input_path: str, output_path: str, options: dict) -> None:
+        """Scale an HDF5 dataset by tiling its base vectors."""
+
+        self.log(
+            "Scaling dataset "
+            f"(base={options.get('base_dataset')}, queries={options.get('query_dataset')}) "
+            f"x{options.get('scale_factor')}",
+        )
+        self.progress_label.setText("Scaling…")
+        self.progress_bar.setValue(0)
+
+        def do_scale(progress_callback=None):
+            scaler = DatasetScaler(progress_callback=progress_callback)
+            return scaler.scale_hdf5(
+                input_path,
+                output_path,
+                base_dataset=options.get("base_dataset", "base"),
+                query_dataset=options.get("query_dataset", "test"),
+                neighbor_dataset=options.get("neighbor_dataset", "neighbors"),
+                scale_factor=options.get("scale_factor", 1),
+                compression=options.get("compression"),
+            )
+
+        self._current_worker = self._worker_manager.run_task(
+            do_scale,
+            on_progress=self._on_scale_progress,
+            on_result=self._on_scale_complete,
+            on_error=self._on_scale_error,
+        )
+
+    def _on_scale_progress(self, current: int, total: int) -> None:
+        if total > 0:
+            percent = int((current / total) * 100)
+            self.progress_bar.setValue(percent)
+            self.progress_label.setText(f"Scaling… {percent}%")
+        self.scale_view.update_progress(current, total)
+
+    def _on_scale_complete(self, result: dict) -> None:
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Ready")
+        self.scale_view.scaling_complete(result)
+        self.log(
+            f"Scale complete: base={result.get('base_vectors'):,} vectors, "
+            f"queries={result.get('query_count', 0):,}"
+        )
+        self.status_bar.showMessage("Scale complete")
+
+    def _on_scale_error(self, error: Exception, traceback_str: str) -> None:
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Error")
+        self.scale_view.scaling_error(str(error))
+        self.log(f"Scale error: {error}", "ERROR")
         self.status_bar.showMessage(f"Error: {error}")
 
     def closeEvent(self, event) -> None:

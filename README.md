@@ -5,14 +5,14 @@ Built with **PySide6** for a clean, extensible, and non‑blocking UX.
 
 ---
 
-## 🚀 Features (Planned)
+## 🚀 Features
 
-- Inspect FBIN, IBIN, NPY, and HDF5 metadata  
-- Minimal metadata table with optional advanced inspector (future milestone)  
-- Convert between formats (FBIN ↔ NPY, HDF5 ↔ NPY, etc.)  
-- Merge multiple FBIN shards into a single dataset  
-- Threaded operations with progress bar + logs  
-- Extensible sidebar-based UI for future tools  
+- Inspect FBIN, IBIN, NPY, and HDF5 metadata
+- Convert between formats (FBIN ↔ NPY, HDF5 ↔ NPY, etc.)
+- Merge multiple FBIN shards into a single dataset
+- Scale HDF5 datasets by tiling base vectors and regenerating neighbors
+- Threaded operations with progress bar + logs
+- Extensible sidebar-based UI for future tools
 
 ---
 
@@ -74,6 +74,14 @@ python -m src.app
 ```
 
 (Exact command may change once final project structure is set.)
+
+### Scaling an HDF5 dataset
+
+1. Open the **Scale** tool from the sidebar and choose an input HDF5 file.
+2. Pick the dataset paths for **Base**, **Queries**, and **Neighbors** from the dropdowns populated from the file.
+3. Enter the integer **Scale Factor** to control how many times the base vectors are repeated. Queries are copied as-is, and neighbor indices are expanded to point into each repeated block.
+4. Choose compression (optional) and set an output HDF5 path. The scaler creates parent groups automatically when writing nested dataset paths.
+5. Start the scaling job and monitor the progress bar and status messages until the output file is written.
 
 ---
 
