@@ -88,7 +88,7 @@ class ConverterView(QWidget):
         format_row = QHBoxLayout()
         format_row.addWidget(QLabel("Output Format:"))
         self.output_format = QComboBox()
-        self.output_format.addItems(["HDF5 (.h5)", "NPY (.npy)"])
+        self.output_format.addItems(["HDF5 (.h5)", "NPY (.npy)", "FBIN (.fbin)"])
         self.output_format.currentIndexChanged.connect(self._on_format_changed)
         format_row.addWidget(self.output_format)
         format_row.addStretch()
@@ -181,25 +181,27 @@ class ConverterView(QWidget):
             self,
             "Select Input File",
             "",
-            "All Supported Files (*.npy *.h5 *.hdf5);;NPY Files (*.npy);;HDF5 Files (*.h5 *.hdf5)"
+            "All Supported Files (*.npy *.h5 *.hdf5 *.fbin);;NPY Files (*.npy);;HDF5 Files (*.h5 *.hdf5);;FBIN Files (*.fbin)"
         )
         if file_path:
             self.input_path.setText(file_path)
             suffix = Path(file_path).suffix.lower()
-            format_name = {".npy": "NPY", ".h5": "HDF5", ".hdf5": "HDF5"}.get(suffix, "Unknown")
+            format_name = {".npy": "NPY", ".h5": "HDF5", ".hdf5": "HDF5", ".fbin": "FBIN"}.get(suffix, "Unknown")
             self.input_format_label.setText(f"Format: {format_name}")
             self._update_convert_state()
-            
-            # Auto-suggest output format
-            if format_name == "NPY":
-                self.output_format.setCurrentIndex(0)  # HDF5
-            else:
-                self.output_format.setCurrentIndex(1)  # NPY
+            self._update_output_format_options(format_name)
 
     def _on_browse_output(self) -> None:
         """Handle output file browsing."""
-        ext = ".h5" if self.output_format.currentIndex() == 0 else ".npy"
-        filter_text = "HDF5 Files (*.h5)" if ext == ".h5" else "NPY Files (*.npy)"
+        index = self.output_format.currentIndex()
+        ext_map = {0: ".h5", 1: ".npy", 2: ".fbin"}
+        filter_map = {
+            0: "HDF5 Files (*.h5)",
+            1: "NPY Files (*.npy)",
+            2: "FBIN Files (*.fbin)"
+        }
+        ext = ext_map.get(index, ".h5")
+        filter_text = filter_map.get(index, "HDF5 Files (*.h5)")
         
         file_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -216,7 +218,11 @@ class ConverterView(QWidget):
 
     def _on_format_changed(self) -> None:
         """Handle output format change."""
-        is_hdf5 = self.output_format.currentIndex() == 0
+        index = self.output_format.currentIndex()
+        is_hdf5 = index == 0
+        is_fbin = index == 2
+        
+        # HDF5-only options
         self.compression.setEnabled(is_hdf5)
         self.dataset_name.setEnabled(is_hdf5)
         
@@ -224,9 +230,19 @@ class ConverterView(QWidget):
         current_path = self.output_path.text()
         if current_path:
             path = Path(current_path)
-            new_ext = ".h5" if is_hdf5 else ".npy"
+            ext_map = {0: ".h5", 1: ".npy", 2: ".fbin"}
+            new_ext = ext_map.get(index, ".h5")
             new_path = path.with_suffix(new_ext)
             self.output_path.setText(str(new_path))
+
+    def _update_output_format_options(self, input_format: str) -> None:
+        """Update output format options based on input format."""
+        if input_format == "NPY":
+            self.output_format.setCurrentIndex(0)  # Default to HDF5
+        elif input_format == "FBIN":
+            self.output_format.setCurrentIndex(1)  # Default to NPY
+        else:
+            self.output_format.setCurrentIndex(1)  # Default to NPY
 
     def _update_convert_state(self) -> None:
         """Update the convert button state."""
