@@ -582,16 +582,18 @@ class MainWindow(QMainWindow):
 
     # Wrap FBIN/IBIN into HDF5
     def validate_wrap_inputs(
-        self, fbin_paths: list[str], ibin_path: str | None
+        self, base_paths: list[str], query_path: str, ibin_path: str | None
     ) -> None:
         """Validate wrap inputs before running the wrap job."""
 
-        self.log(f"Validating {len(fbin_paths)} FBIN files for wrapping…")
+        self.log(
+            f"Validating base={len(base_paths)} FBIN file(s) and queries file for wrapping…"
+        )
         self._cancel_callback = None
 
         def do_validate(progress_callback=None):
             wrapper = HDF5Wrapper()
-            return wrapper.validate_inputs(fbin_paths, ibin_path)
+            return wrapper.validate_inputs(base_paths, query_path, ibin_path)
 
         self._current_worker = self._worker_manager.run_task(
             do_validate,
@@ -600,12 +602,13 @@ class MainWindow(QMainWindow):
         )
 
     def wrap_into_hdf5(
-        self, fbin_paths: list[str], output_path: str, options: dict
+        self, base_paths: list[str], query_path: str, output_path: str, options: dict
     ) -> None:
         """Execute the wrapping job in a background worker."""
 
         self.log(
-            f"Wrapping {len(fbin_paths)} FBIN files to {output_path} (vectors={options.get('vector_dataset', 'vectors')})"
+            "Wrapping base + query FBIN files to "
+            f"{output_path} (base={len(base_paths)}, queries={Path(query_path).name})"
         )
         self.progress_label.setText("Wrapping…")
         self.progress_bar.setValue(0)
@@ -619,10 +622,14 @@ class MainWindow(QMainWindow):
         def do_wrap(progress_callback=None):
             wrapper.progress_callback = progress_callback
             return wrapper.wrap_into_hdf5(
-                fbin_paths,
+                base_paths,
+                query_path,
                 output_path,
-                vector_dataset=options.get("vector_dataset", "vectors"),
+                base_dataset=options.get("base_dataset", "base"),
+                train_dataset=options.get("train_dataset", "train"),
+                query_dataset=options.get("query_dataset", "test"),
                 neighbor_dataset=options.get("neighbor_dataset", "neighbors"),
+                include_train_alias=options.get("include_train_alias", True),
                 compression=options.get("compression"),
                 ibin_path=options.get("ibin_path"),
             )
@@ -654,7 +661,9 @@ class MainWindow(QMainWindow):
         self._cancel_callback = None
         self.wrap_view.wrap_complete(result)
         self.log(
-            f"Wrapped vectors to {result.get('output_path')} as {result.get('vector_dataset', 'vectors')}"
+            "Wrapped vectors to "
+            f"{result.get('output_path')} (base={result.get('base_dataset')}, "
+            f"queries={result.get('query_dataset')})"
         )
         self.status_bar.showMessage("Wrap complete")
 

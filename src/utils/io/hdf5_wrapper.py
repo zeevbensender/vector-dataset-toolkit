@@ -47,34 +47,30 @@ class HDF5Wrapper:
             self.log_callback(message)
 
     def validate_inputs(
-        self, fbin_paths: list[str | Path], ibin_path: str | Path | None = None
+        self,
+        base_fbin_paths: list[str | Path],
+        query_fbin_path: str | Path,
+        ibin_path: str | Path | None = None,
     ) -> dict[str, Any]:
-        """Validate FBIN shards and optional IBIN neighbor file."""
+        """Validate FBIN shards (base/train), queries, and optional IBIN neighbors."""
 
-        files: list[dict[str, Any]] = []
+        base_files: list[dict[str, Any]] = []
         errors: list[str] = []
         warnings: list[str] = []
 
-        if not fbin_paths:
-            errors.append("At least one FBIN file is required")
-            return {
-                "valid": False,
-                "files": files,
-                "errors": errors,
-                "warnings": warnings,
-            }
+        if not base_fbin_paths:
+            errors.append("At least one base FBIN file is required")
 
-        total_vectors = 0
         dimension: int | None = None
-
-        for path_str in fbin_paths:
+        total_base_vectors = 0
+        for path_str in base_fbin_paths:
             path = Path(path_str)
             try:
                 reader = FBINReader(path)
                 meta = reader.get_metadata()
                 reader.close()
             except Exception as exc:  # pragma: no cover - defensive
-                files.append(
+                base_files.append(
                     {
                         "path": str(path),
                         "status": "error",
@@ -96,8 +92,8 @@ class HDF5Wrapper:
             if not meta.get("size_match", True):
                 warnings.append(f"File size mismatch for {path}")
 
-            total_vectors += meta["vector_count"]
-            files.append(
+            total_base_vectors += meta["vector_count"]
+            base_files.append(
                 {
                     "path": str(path),
                     "status": "ok",
@@ -106,6 +102,25 @@ class HDF5Wrapper:
                     "dimension": meta["dimension"],
                 }
             )
+
+        # Queries
+        query_meta: dict[str, Any] | None = None
+        if not query_fbin_path:
+            errors.append("A queries FBIN file is required")
+        else:
+            query_path = Path(query_fbin_path)
+            try:
+                query_reader = FBINReader(query_path)
+                query_meta = query_reader.get_metadata()
+                query_reader.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(f"Failed to read queries FBIN: {exc}")
+            else:
+                if dimension is not None and query_meta["dimension"] != dimension:
+                    errors.append(
+                        "Query dimension does not match base vectors "
+                        f"(expected {dimension}, got {query_meta['dimension']})"
+                    )
 
         k: int | None = None
         ibin_meta: dict[str, Any] | None = None
@@ -120,47 +135,58 @@ class HDF5Wrapper:
                 errors.append(f"Failed to read IBIN file: {exc}")
                 ibin_meta = {"path": str(ibin_path_obj), "status": "error", "message": str(exc)}
 
-            if ibin_meta and "vector_count" in ibin_meta and total_vectors:
-                if ibin_meta["vector_count"] != total_vectors:
+            if ibin_meta and "vector_count" in ibin_meta and query_meta:
+                if ibin_meta["vector_count"] != query_meta.get("vector_count", 0):
                     errors.append(
-                        f"IBIN query count ({ibin_meta['vector_count']}) does not match total vectors ({total_vectors})"
+                        "IBIN query count "
+                        f"({ibin_meta['vector_count']}) does not match queries ({query_meta.get('vector_count', 0)})"
                     )
 
-        estimated_vectors_bytes = total_vectors * (dimension or 0) * 4
+        estimated_base_bytes = total_base_vectors * (dimension or 0) * 4
+        estimated_query_bytes = (query_meta.get("vector_count", 0) if query_meta else 0) * (dimension or 0) * 4
         estimated_neighbors_bytes = (
-            total_vectors * (k or 0) * 4 if ibin_path and k else 0
+            (query_meta.get("vector_count", 0) if query_meta else 0) * (k or 0) * 4
+            if ibin_path and k
+            else 0
         )
 
         return {
             "valid": not errors,
-            "files": files,
+            "base_files": base_files,
+            "query_file": query_meta | {"path": str(query_fbin_path)} if query_meta else None,
             "ibin": ibin_meta,
             "errors": errors,
             "warnings": warnings,
-            "total_vectors": total_vectors,
-            "dimension": dimension,
+            "total_base_vectors": total_base_vectors,
+            "total_query_vectors": query_meta.get("vector_count", 0) if query_meta else 0,
+            "dimension": dimension if dimension is not None else query_meta.get("dimension") if query_meta else None,
             "k": k,
-            "estimated_bytes": estimated_vectors_bytes + estimated_neighbors_bytes,
+            "estimated_bytes": estimated_base_bytes + estimated_query_bytes + estimated_neighbors_bytes,
         }
 
     def wrap_into_hdf5(
         self,
-        fbin_paths: list[str | Path],
+        base_fbin_paths: list[str | Path],
+        query_fbin_path: str | Path,
         output_path: str | Path,
         *,
-        vector_dataset: str = "vectors",
+        base_dataset: str = "base",
+        train_dataset: str = "train",
+        query_dataset: str = "test",
         neighbor_dataset: str = "neighbors",
+        include_train_alias: bool = True,
         compression: str | None = None,
         ibin_path: str | Path | None = None,
     ) -> dict[str, Any]:
-        """Wrap FBIN shards and optional IBIN neighbors into an HDF5 file."""
+        """Wrap base + query FBINs (and optional IBIN) into an HDF5 file."""
 
         self._cancelled = False
-        validation = self.validate_inputs(fbin_paths, ibin_path)
+        validation = self.validate_inputs(base_fbin_paths, query_fbin_path, ibin_path)
         if not validation["valid"]:
             raise ValueError("; ".join(validation["errors"]))
 
-        total_vectors = validation["total_vectors"]
+        base_vectors = validation["total_base_vectors"]
+        query_vectors = validation["total_query_vectors"]
         dimension = validation["dimension"] or 0
         k = validation.get("k") or 0
 
@@ -170,46 +196,74 @@ class HDF5Wrapper:
         os.close(fd)
         temp_path = Path(temp_path_str)
 
-        total_steps = total_vectors + (total_vectors if ibin_path and k else 0)
-        vector_written = 0
+        total_steps = base_vectors + query_vectors + (query_vectors if ibin_path and k else 0)
+        base_written = 0
+        query_written = 0
         neighbor_written = 0
 
         try:
             with h5py.File(temp_path, "w") as h5:
-                vector_chunks = (min(self.chunk_size, total_vectors), dimension)
-                vectors_ds = h5.create_dataset(
-                    vector_dataset,
-                    shape=(total_vectors, dimension),
+                base_chunks = (min(self.chunk_size, base_vectors), dimension)
+                base_ds = h5.create_dataset(
+                    base_dataset,
+                    shape=(base_vectors, dimension),
                     dtype=np.float32,
-                    chunks=vector_chunks,
+                    chunks=base_chunks,
                     compression=compression,
                 )
-                vectors_ds.attrs["vector_count"] = total_vectors
-                vectors_ds.attrs["dimension"] = dimension
-                vectors_ds.attrs["source_files"] = [str(Path(p)) for p in fbin_paths]
+                base_ds.attrs["vector_count"] = base_vectors
+                base_ds.attrs["dimension"] = dimension
+                base_ds.attrs["source_files"] = [str(Path(p)) for p in base_fbin_paths]
 
-                self._log("Copying vector shards into HDF5 dataset")
-                for fbin_path in fbin_paths:
+                self._log("Copying base/train vectors into HDF5 datasets")
+                for fbin_path in base_fbin_paths:
                     reader = FBINReader(fbin_path)
                     for chunk in reader.read_sequential(chunk_size=self.chunk_size):
                         if self._cancelled:
                             raise RuntimeError("Wrap cancelled")
-                        end = vector_written + len(chunk)
-                        vectors_ds[vector_written:end] = chunk
-                        vector_written = end
-                        self._report_progress(vector_written + neighbor_written, total_steps)
+                        end = base_written + len(chunk)
+                        base_ds[base_written:end] = chunk
+                        base_written = end
+                        self._report_progress(base_written + query_written + neighbor_written, total_steps)
                     reader.close()
 
+                if include_train_alias and train_dataset and train_dataset != base_dataset:
+                    h5[train_dataset] = base_ds
+
+                query_chunks = (min(self.chunk_size, query_vectors), dimension)
+                query_ds = h5.create_dataset(
+                    query_dataset,
+                    shape=(query_vectors, dimension),
+                    dtype=np.float32,
+                    chunks=query_chunks,
+                    compression=compression,
+                )
+                query_ds.attrs["vector_count"] = query_vectors
+                query_ds.attrs["dimension"] = dimension
+                query_ds.attrs["source_files"] = [str(Path(query_fbin_path))]
+
+                self._log("Copying query vectors into HDF5 dataset")
+                query_reader = FBINReader(query_fbin_path)
+                for chunk in query_reader.read_sequential(chunk_size=self.chunk_size):
+                    if self._cancelled:
+                        raise RuntimeError("Wrap cancelled")
+                    end = query_written + len(chunk)
+                    query_ds[query_written:end] = chunk
+                    query_written = end
+                    self._report_progress(base_written + query_written + neighbor_written, total_steps)
+                query_reader.close()
+
+                neighbors_ds = None
                 if ibin_path and k:
-                    neighbor_chunks = (min(self.chunk_size, total_vectors), k)
+                    neighbor_chunks = (min(self.chunk_size, query_vectors), k)
                     neighbors_ds = h5.create_dataset(
                         neighbor_dataset,
-                        shape=(total_vectors, k),
+                        shape=(query_vectors, k),
                         dtype=np.int32,
                         chunks=neighbor_chunks,
                         compression=compression,
                     )
-                    neighbors_ds.attrs["vector_count"] = total_vectors
+                    neighbors_ds.attrs["vector_count"] = query_vectors
                     neighbors_ds.attrs["k"] = k
                     neighbors_ds.attrs["source_files"] = [str(Path(ibin_path))]
 
@@ -221,14 +275,16 @@ class HDF5Wrapper:
                         end = neighbor_written + len(chunk)
                         neighbors_ds[neighbor_written:end] = chunk
                         neighbor_written = end
-                        self._report_progress(vector_written + neighbor_written, total_steps)
+                        self._report_progress(base_written + query_written + neighbor_written, total_steps)
                     ibin_reader.close()
 
-                h5.attrs["vector_count"] = total_vectors
+                h5.attrs["base_count"] = base_vectors
+                h5.attrs["query_count"] = query_vectors
                 h5.attrs["dimension"] = dimension
                 if k:
                     h5.attrs["k"] = k
-                h5.attrs["source_files"] = [str(Path(p)) for p in fbin_paths]
+                h5.attrs["base_sources"] = [str(Path(p)) for p in base_fbin_paths]
+                h5.attrs["query_source"] = str(Path(query_fbin_path))
                 if ibin_path:
                     h5.attrs["ibin_source"] = str(Path(ibin_path))
 
@@ -239,14 +295,20 @@ class HDF5Wrapper:
 
         result = {
             "output_path": str(output_path),
-            "vector_dataset": vector_dataset,
+            "base_dataset": base_dataset,
+            "train_dataset": train_dataset if include_train_alias else None,
+            "query_dataset": query_dataset,
             "neighbor_dataset": neighbor_dataset if ibin_path else None,
-            "vectors": {
-                "count": total_vectors,
+            "base": {
+                "count": base_vectors,
+                "dimension": dimension,
+            },
+            "queries": {
+                "count": query_vectors,
                 "dimension": dimension,
             },
             "neighbors": {
-                "count": total_vectors if ibin_path else 0,
+                "count": query_vectors if ibin_path else 0,
                 "k": k,
             }
             if ibin_path
