@@ -152,6 +152,47 @@ Select multiple FBIN shard files of the same dataset and merge them into a singl
 
 ---
 
+# Milestone F — Wrap FBIN/IBIN Into HDF5 Packages
+
+## Goal
+Provide a guided workflow to wrap existing FBIN vector files (and optional IBIN ground-truth neighbors) into a single HDF5 container with consistent group/dataset naming.
+
+## UI Layout
+### Left Panel:
+- Multi-file selector for input FBIN files (supports shards) and an optional IBIN file
+- Output file picker (HDF5)
+- Text fields / dropdowns:
+  - Dataset name for vectors (default: `vectors`; can be overridden to match inspector labels such as `features`)
+  - Dataset name for neighbors (default: `neighbors`; can be overridden to match inspector labels such as `distances`)
+  - Compression options (None, gzip, lzf)
+- "Validate Inputs" button
+- "Wrap Into HDF5" button
+
+### Right Panel:
+- Preview table showing:
+  - Source files detected (FBIN shards, IBIN)
+  - Vector count & dimension (aggregated)
+  - Neighbor count & k if IBIN provided
+  - Estimated output size and compression choice
+- Status area for validation messages
+- Placeholder link/button: "Open in Inspector" (non-functional for this milestone)
+
+### Bottom Dock:
+- Progress bar with stages (validation → copy → finalize)
+- Log messages streamed during wrapping
+
+## Acceptance Criteria
+- User can select one or more FBIN files (shards allowed) and an optional IBIN file
+- App validates compatibility (matching dimensions across shards; IBIN query count matches vector count)
+- HDF5 output contains:
+  - `/vectors` (default) or chosen dataset name with float32 vectors
+  - `/neighbors` (default) or chosen dataset name with int32 indices when IBIN provided
+  - Basic metadata attributes: `vector_count`, `dimension`, `k` (if neighbors), `source_files`
+- Operation runs in a background thread and streams progress/logs
+- Errors for invalid inputs or write failures surface in the log dock
+
+---
+
 # General Implementation Notes
 - All long operations must run in background threads.
 - Avoid UI freezes.
