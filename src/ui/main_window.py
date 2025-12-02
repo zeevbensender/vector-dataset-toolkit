@@ -27,6 +27,7 @@ from ..utils.io import (
     FBINConverter,
     FBINReader,
     HDF5Reader,
+    HDF5Wrapper,
     IBINReader,
     NPYReader,
     ShardMerger,
@@ -35,6 +36,7 @@ from ..views.converter_view import ConverterView
 from ..views.inspector_view import InspectorView
 from ..views.logs_view import LogsView
 from ..views.merge_view import MergeView
+from ..views.wrap_view import WrapView
 from ..views.settings_view import SettingsView
 from ..workers.worker import Worker, WorkerManager
 
@@ -51,6 +53,7 @@ class MainWindow(QMainWindow):
         self._worker_manager = WorkerManager()
         self._current_worker: Worker | None = None
         self._current_reader: Any = None
+        self._cancel_callback: callable | None = None
 
         self._setup_ui()
         self._connect_signals()
@@ -121,6 +124,7 @@ class MainWindow(QMainWindow):
         sections = [
             ("Inspector", "Inspect file metadata"),
             ("Converter", "Convert between formats"),
+            ("Wrap", "Wrap FBIN/IBIN into HDF5"),
             ("Merge", "Merge shard files"),
             ("Logs", "View application logs"),
             ("Settings", "Application settings"),
@@ -143,6 +147,9 @@ class MainWindow(QMainWindow):
 
         self.converter_view = ConverterView()
         self.view_stack.addWidget(self.converter_view)
+
+        self.wrap_view = WrapView()
+        self.view_stack.addWidget(self.wrap_view)
 
         self.merge_view = MergeView()
         self.view_stack.addWidget(self.merge_view)
@@ -448,6 +455,11 @@ class MainWindow(QMainWindow):
         if self._current_worker:
             self._current_worker.cancel()
             self.log("Operation cancelled", "WARNING")
+        if self._cancel_callback:
+            try:
+                self._cancel_callback()
+            finally:
+                self._cancel_callback = None
 
     # Shard validation and merge methods
     def validate_shards(self, shard_paths: list[str]) -> None:
@@ -566,6 +578,92 @@ class MainWindow(QMainWindow):
         
         self.merge_view.merge_error(str(error))
         self.log(f"Merge error: {error}", "ERROR")
+        self.status_bar.showMessage(f"Error: {error}")
+
+    # Wrap FBIN/IBIN into HDF5
+    def validate_wrap_inputs(
+        self, fbin_paths: list[str], ibin_path: str | None
+    ) -> None:
+        """Validate wrap inputs before running the wrap job."""
+
+        self.log(f"Validating {len(fbin_paths)} FBIN files for wrapping…")
+        self._cancel_callback = None
+
+        def do_validate(progress_callback=None):
+            wrapper = HDF5Wrapper()
+            return wrapper.validate_inputs(fbin_paths, ibin_path)
+
+        self._current_worker = self._worker_manager.run_task(
+            do_validate,
+            on_result=self._on_wrap_validation_complete,
+            on_error=self._on_wrap_error,
+        )
+
+    def wrap_into_hdf5(
+        self, fbin_paths: list[str], output_path: str, options: dict
+    ) -> None:
+        """Execute the wrapping job in a background worker."""
+
+        self.log(
+            f"Wrapping {len(fbin_paths)} FBIN files to {output_path} (vectors={options.get('vector_dataset', 'vectors')})"
+        )
+        self.progress_label.setText("Wrapping…")
+        self.progress_bar.setValue(0)
+
+        wrapper = HDF5Wrapper(
+            chunk_size=options.get("chunk_size", 10000),
+            progress_callback=None,
+        )
+        self._cancel_callback = wrapper.cancel
+
+        def do_wrap(progress_callback=None):
+            wrapper.progress_callback = progress_callback
+            return wrapper.wrap_into_hdf5(
+                fbin_paths,
+                output_path,
+                vector_dataset=options.get("vector_dataset", "vectors"),
+                neighbor_dataset=options.get("neighbor_dataset", "neighbors"),
+                compression=options.get("compression"),
+                ibin_path=options.get("ibin_path"),
+            )
+
+        self._current_worker = self._worker_manager.run_task(
+            do_wrap,
+            on_progress=self._on_wrap_progress,
+            on_result=self._on_wrap_complete,
+            on_error=self._on_wrap_error,
+        )
+
+    def _on_wrap_validation_complete(self, result: dict) -> None:
+        self.wrap_view.display_validation(result)
+        if result.get("valid"):
+            self.log("Wrap inputs validated")
+        else:
+            self.log("Wrap validation failed", "ERROR")
+
+    def _on_wrap_progress(self, current: int, total: int) -> None:
+        if total > 0:
+            percent = int((current / total) * 100)
+            self.progress_bar.setValue(percent)
+            self.progress_label.setText(f"Wrapping… {percent}%")
+        self.wrap_view.update_progress(current, total)
+
+    def _on_wrap_complete(self, result: dict) -> None:
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Ready")
+        self._cancel_callback = None
+        self.wrap_view.wrap_complete(result)
+        self.log(
+            f"Wrapped vectors to {result.get('output_path')} as {result.get('vector_dataset', 'vectors')}"
+        )
+        self.status_bar.showMessage("Wrap complete")
+
+    def _on_wrap_error(self, error: Exception, traceback_str: str) -> None:
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Error")
+        self._cancel_callback = None
+        self.wrap_view.wrap_error(str(error))
+        self.log(f"Wrap error: {error}", "ERROR")
         self.status_bar.showMessage(f"Error: {error}")
 
     def closeEvent(self, event) -> None:
