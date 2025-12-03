@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img">
+  <title>Vector Dataset Toolkit</title>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1b9ad7" />
+      <stop offset="100%" stop-color="#084d8c" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ffd166" />
+      <stop offset="100%" stop-color="#fca311" />
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="72" fill="url(#bg)" />
+  <g stroke="#ffffff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M132 348c32-80 80-120 144-144 22-8 44-12 72-12" />
+    <path d="M152 224c24 16 48 24 72 24 48 0 76-28 112-56" />
+    <circle cx="168" cy="356" r="22" fill="url(#accent)" stroke="none" />
+    <circle cx="260" cy="296" r="22" fill="url(#accent)" stroke="none" />
+    <circle cx="352" cy="192" r="22" fill="url(#accent)" stroke="none" />
+  </g>
+  <text x="256" y="416" text-anchor="middle" font-family="'Inter', 'Segoe UI', sans-serif" font-size="72" font-weight="700" fill="#ffffff">
+    V
+  </text>
+</svg>

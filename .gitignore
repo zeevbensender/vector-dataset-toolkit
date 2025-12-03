@@ -209,3 +209,9 @@ __marimo__/
 # Custom
 vnvtoolkit/
 .idea/
+
+# Generated icon artifacts
+resources/icons/*.png
+resources/icons/*.ico
+resources/icons/*.icns
+resources/resources_rc.py
