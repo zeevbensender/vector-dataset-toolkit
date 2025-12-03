@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..utils.settings import SettingsManager
+
 
 # Field descriptions for common metadata fields
 FIELD_DESCRIPTIONS = {
@@ -66,11 +68,13 @@ class AdvancedInspectorDialog(QDialog):
         parent: QWidget | None,
         metadata: dict[str, Any],
         file_path: str,
+        settings_manager: SettingsManager | None = None,
     ) -> None:
         super().__init__(parent)
         self.metadata = metadata
         self.file_path = file_path
         self._sample_data: Any = None
+        self._settings = settings_manager
         
         self.setWindowTitle(f"Advanced Inspector - {Path(file_path).name}")
         self.setMinimumSize(900, 700)
@@ -480,11 +484,16 @@ class AdvancedInspectorDialog(QDialog):
 
     def _on_export_json(self) -> None:
         """Export metadata as JSON file."""
+        start_dir = (
+            Path(self._settings.get_last_directory())
+            if self._settings
+            else Path(self.file_path).parent
+        )
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Metadata as JSON",
-            f"{Path(self.file_path).stem}_metadata.json",
-            "JSON Files (*.json)"
+            str(start_dir / f"{Path(self.file_path).stem}_metadata.json"),
+            "JSON Files (*.json)",
         )
         if file_path:
             try:
@@ -494,6 +503,8 @@ class AdvancedInspectorDialog(QDialog):
                     self, "Export Complete",
                     f"Metadata exported to {file_path}"
                 )
+                if self._settings:
+                    self._settings.update_last_directory(file_path)
             except Exception as e:
                 QMessageBox.warning(self, "Export Error", f"Failed to export: {e}")
 

@@ -1,5 +1,6 @@
 """Inspector view for displaying file metadata and samples."""
 
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -21,13 +22,22 @@ from PySide6.QtWidgets import (
 )
 
 
+from ..utils.settings import SettingsManager
+
+
 class InspectorView(QWidget):
     """View for inspecting file metadata and sampling vectors."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings_manager: SettingsManager | None = None,
+    ) -> None:
         super().__init__(parent)
         self._current_file: str | None = None
         self._current_reader: Any = None
+        self._settings = settings_manager
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -36,18 +46,18 @@ class InspectorView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Create splitter for left/right panels
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left panel - file selection
         left_panel = self._create_left_panel()
-        splitter.addWidget(left_panel)
+        self.splitter.addWidget(left_panel)
 
         # Right panel - metadata and preview
         right_panel = self._create_right_panel()
-        splitter.addWidget(right_panel)
+        self.splitter.addWidget(right_panel)
 
-        splitter.setSizes([300, 600])
-        layout.addWidget(splitter)
+        self.splitter.setSizes([300, 600])
+        layout.addWidget(self.splitter)
 
     def _create_left_panel(self) -> QWidget:
         """Create the left panel with file selection."""
@@ -176,10 +186,11 @@ class InspectorView(QWidget):
 
     def _on_open_file(self) -> None:
         """Handle file open dialog."""
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Vector Dataset File",
-            "",
+            start_dir,
             "All Supported Files (*.npy *.h5 *.hdf5 *.fbin *.ibin);;NPY Files (*.npy);;HDF5 Files (*.h5 *.hdf5);;FBIN Files (*.fbin);;IBIN Files (*.ibin)"
         )
         if file_path:
@@ -187,6 +198,8 @@ class InspectorView(QWidget):
             self.file_label.setText(file_path)
             self.scan_btn.setEnabled(True)
             self.validate_btn.setEnabled(True)
+            if self._settings:
+                self._settings.update_last_directory(file_path)
             self._clear_metadata()
 
     def _on_scan_file(self) -> None:
@@ -319,6 +332,7 @@ class InspectorView(QWidget):
             self.window(),
             metadata,
             self._current_file,
+            self._settings,
         )
         dialog.exec()
 

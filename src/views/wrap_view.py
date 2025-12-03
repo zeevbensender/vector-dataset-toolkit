@@ -26,24 +26,33 @@ from PySide6.QtWidgets import (
 )
 
 
+from ..utils.settings import SettingsManager
+
+
 class WrapView(QWidget):
     """UI for the guided FBIN/IBIN → HDF5 wrapping flow."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings_manager: SettingsManager | None = None,
+    ) -> None:
         super().__init__(parent)
         self._fbin_paths: list[str] = []
         self._last_validation: dict[str, Any] | None = None
+        self._settings = settings_manager
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._create_left_panel())
-        splitter.addWidget(self._create_right_panel())
-        splitter.setSizes([480, 420])
-        layout.addWidget(splitter)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self._create_left_panel())
+        self.splitter.addWidget(self._create_right_panel())
+        self.splitter.setSizes([480, 420])
+        layout.addWidget(self.splitter)
 
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
@@ -214,13 +223,16 @@ class WrapView(QWidget):
 
     # UI event handlers
     def _on_add_fbins(self) -> None:
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select FBIN Files", "", "FBIN Files (*.fbin)"
+            self, "Select FBIN Files", start_dir, "FBIN Files (*.fbin)"
         )
         if files:
             for f in files:
                 if f not in self._fbin_paths:
                     self._fbin_paths.append(f)
+            if self._settings:
+                self._settings.update_last_directory(files[0])
             self._refresh_fbin_table()
             self._update_actions()
 
@@ -238,21 +250,36 @@ class WrapView(QWidget):
         self._update_actions()
 
     def _on_browse_ibin(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select IBIN File", "", "IBIN Files (*.ibin)")
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select IBIN File", start_dir, "IBIN Files (*.ibin)"
+        )
         if path:
             self.ibin_path.setText(path)
+            if self._settings:
+                self._settings.update_last_directory(path)
 
     def _on_browse_queries(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Queries FBIN", "", "FBIN Files (*.fbin)")
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Queries FBIN", start_dir, "FBIN Files (*.fbin)"
+        )
         if path:
             self.query_path.setText(path)
             self._update_actions()
+            if self._settings:
+                self._settings.update_last_directory(path)
 
     def _on_browse_output(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Select Output HDF5", "", "HDF5 Files (*.h5 *.hdf5)")
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Select Output HDF5", start_dir, "HDF5 Files (*.h5 *.hdf5)"
+        )
         if path:
             self.output_path.setText(path)
             self._update_actions()
+            if self._settings:
+                self._settings.update_last_directory(path)
 
     def _on_validate(self) -> None:
         if not self._fbin_paths:

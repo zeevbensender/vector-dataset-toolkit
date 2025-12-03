@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..utils.settings import SettingsManager
 from ..utils.io import (
     Converter,
     FBINConverter,
@@ -60,9 +61,12 @@ class MainWindow(QMainWindow):
         self._current_file_path: str | None = None
         self._cancel_callback: callable | None = None
         self._post_scan_action: str | None = None
+        self._settings = SettingsManager()
+        self._splitter_registry: list[tuple[QSplitter, str]] = []
 
         self._setup_ui()
         self._connect_signals()
+        self._restore_window_state()
 
     def _setup_ui(self) -> None:
         """Set up the main UI layout."""
@@ -77,20 +81,21 @@ class MainWindow(QMainWindow):
         self._create_toolbar()
 
         # Main content area with sidebar
-        content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left sidebar
         self.sidebar = self._create_sidebar()
-        content_splitter.addWidget(self.sidebar)
+        self.content_splitter.addWidget(self.sidebar)
 
         # Stacked widget for views
         self.view_stack = QStackedWidget()
         self._create_views()
-        content_splitter.addWidget(self.view_stack)
+        self.content_splitter.addWidget(self.view_stack)
 
         # Set sidebar to fixed width initially
-        content_splitter.setSizes([180, 1020])
-        main_layout.addWidget(content_splitter, 1)
+        self.content_splitter.setSizes([180, 1020])
+        main_layout.addWidget(self.content_splitter, 1)
+        self._register_splitter(self.content_splitter, "ui/content_splitter")
 
         # Bottom dock with logs and progress
         bottom_dock = self._create_bottom_dock()
@@ -104,6 +109,7 @@ class MainWindow(QMainWindow):
     def _create_toolbar(self) -> None:
         """Create the main toolbar."""
         toolbar = QToolBar("Main Toolbar")
+        toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
@@ -149,19 +155,19 @@ class MainWindow(QMainWindow):
 
     def _create_views(self) -> None:
         """Create the view widgets."""
-        self.inspector_view = InspectorView()
+        self.inspector_view = InspectorView(settings_manager=self._settings)
         self.view_stack.addWidget(self.inspector_view)
 
-        self.converter_view = ConverterView()
+        self.converter_view = ConverterView(settings_manager=self._settings)
         self.view_stack.addWidget(self.converter_view)
 
-        self.wrap_view = WrapView()
+        self.wrap_view = WrapView(settings_manager=self._settings)
         self.view_stack.addWidget(self.wrap_view)
 
-        self.unwrap_view = UnwrapView()
+        self.unwrap_view = UnwrapView(settings_manager=self._settings)
         self.view_stack.addWidget(self.unwrap_view)
 
-        self.merge_view = MergeView()
+        self.merge_view = MergeView(settings_manager=self._settings)
         self.view_stack.addWidget(self.merge_view)
 
         self.logs_view = LogsView()
@@ -169,6 +175,12 @@ class MainWindow(QMainWindow):
 
         self.settings_view = SettingsView()
         self.view_stack.addWidget(self.settings_view)
+
+        self._register_splitter(self.inspector_view.splitter, "ui/splitter_inspector")
+        self._register_splitter(self.converter_view.splitter, "ui/splitter_converter")
+        self._register_splitter(self.wrap_view.splitter, "ui/splitter_wrap")
+        self._register_splitter(self.unwrap_view.splitter, "ui/splitter_unwrap")
+        self._register_splitter(self.merge_view.splitter, "ui/splitter_merge")
 
     def _create_bottom_dock(self) -> QWidget:
         """Create the bottom dock with logs panel and progress bar."""
@@ -204,6 +216,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         """Connect UI signals."""
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+        self.settings_view.settings_reset_requested.connect(self._on_settings_reset)
 
     @Slot(int)
     def _on_nav_changed(self, index: int) -> None:
@@ -215,10 +228,11 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Vector Dataset File",
-            "",
+            self._settings.get_last_directory(),
             "All Supported Files (*.npy *.h5 *.hdf5 *.fbin *.ibin);;NPY Files (*.npy);;HDF5 Files (*.h5 *.hdf5);;FBIN Files (*.fbin);;IBIN Files (*.ibin)"
         )
         if file_path:
+            self._settings.update_last_directory(file_path)
             # Switch to inspector view and scan file
             self.nav_list.setCurrentRow(0)
             self.inspector_view._current_file = file_path
@@ -921,9 +935,42 @@ class MainWindow(QMainWindow):
         """Handle window close."""
         # Cancel any running workers
         self._worker_manager.cancel_all()
-        
+
         # Close any open readers
         if self._current_reader and hasattr(self._current_reader, "close"):
             self._current_reader.close()
-        
+
+        self._settings.save_window(self)
+        for splitter, key in self._splitter_registry:
+            self._settings.save_splitter(splitter, key)
+        self._settings.sync()
+
         event.accept()
+
+    def _register_splitter(self, splitter: QSplitter, key: str) -> None:
+        """Restore and track splitter for persistence."""
+
+        self._settings.restore_splitter(splitter, key)
+        self._splitter_registry.append((splitter, key))
+
+    def _restore_window_state(self) -> None:
+        """Restore saved geometry, state, and splitter sizes."""
+
+        self._settings.restore_window(self)
+
+    def _on_settings_reset(self) -> None:
+        """Handle reset-all request from settings view."""
+
+        self._settings.reset_all()
+        self.resize(1200, 800)
+        self.content_splitter.setSizes([180, 1020])
+        self.inspector_view.splitter.setSizes([300, 600])
+        self.converter_view.splitter.setSizes([400, 500])
+        self.wrap_view.splitter.setSizes([480, 420])
+        self.unwrap_view.splitter.setSizes([460, 480])
+        self.merge_view.splitter.setSizes([450, 450])
+        QMessageBox.information(
+            self,
+            "Settings Reset",
+            "All application settings have been reset to their defaults.",
+        )
