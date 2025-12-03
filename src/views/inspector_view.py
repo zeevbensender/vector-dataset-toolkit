@@ -3,6 +3,7 @@
 from typing import Any
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
@@ -70,6 +71,11 @@ class InspectorView(QWidget):
         self.scan_btn.clicked.connect(self._on_scan_file)
         file_layout.addWidget(self.scan_btn)
 
+        self.validate_btn = QPushButton("Validate")
+        self.validate_btn.setEnabled(False)
+        self.validate_btn.clicked.connect(self._on_validate_file)
+        file_layout.addWidget(self.validate_btn)
+
         layout.addWidget(file_group)
 
         # Dataset selection for HDF5 files
@@ -132,6 +138,28 @@ class InspectorView(QWidget):
 
         layout.addWidget(metadata_group)
 
+        # Validation results table
+        self.validation_group = QGroupBox("Validation Results")
+        validation_layout = QVBoxLayout(self.validation_group)
+
+        self.validation_table = QTableWidget()
+        self.validation_table.setColumnCount(3)
+        self.validation_table.setHorizontalHeaderLabels(["Check", "Result", "Details"])
+        self.validation_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.validation_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.validation_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch
+        )
+        self.validation_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        validation_layout.addWidget(self.validation_table)
+
+        self.validation_group.setVisible(False)
+        layout.addWidget(self.validation_group)
+
         # Vector preview
         preview_group = QGroupBox("Vector Preview")
         preview_layout = QVBoxLayout(preview_group)
@@ -158,6 +186,7 @@ class InspectorView(QWidget):
             self._current_file = file_path
             self.file_label.setText(file_path)
             self.scan_btn.setEnabled(True)
+            self.validate_btn.setEnabled(True)
             self._clear_metadata()
 
     def _on_scan_file(self) -> None:
@@ -262,6 +291,8 @@ class InspectorView(QWidget):
         self.dataset_group.setVisible(False)
         self.sample_btn.setEnabled(False)
         self.advanced_btn.setEnabled(False)
+        self.validation_group.setVisible(False)
+        self.validation_table.setRowCount(0)
 
     def set_reader(self, reader: Any) -> None:
         """Set the current reader for the loaded file."""
@@ -290,3 +321,62 @@ class InspectorView(QWidget):
             self._current_file,
         )
         dialog.exec()
+
+    def set_validation_running(self, running: bool) -> None:
+        """Toggle buttons while validation is running."""
+        if running:
+            self._validation_prev_state = {
+                "open": self.open_btn.isEnabled(),
+                "scan": self.scan_btn.isEnabled(),
+                "validate": self.validate_btn.isEnabled(),
+                "sample": self.sample_btn.isEnabled(),
+                "advanced": self.advanced_btn.isEnabled(),
+            }
+            self.open_btn.setEnabled(False)
+            self.scan_btn.setEnabled(False)
+            self.validate_btn.setEnabled(False)
+            self.sample_btn.setEnabled(False)
+            self.advanced_btn.setEnabled(False)
+        else:
+            state = getattr(self, "_validation_prev_state", {})
+            self.open_btn.setEnabled(state.get("open", True))
+            self.scan_btn.setEnabled(state.get("scan", False))
+            self.validate_btn.setEnabled(state.get("validate", False))
+            self.sample_btn.setEnabled(state.get("sample", False))
+            self.advanced_btn.setEnabled(state.get("advanced", False))
+
+    def display_validation_results(self, entries: list[dict]) -> None:
+        """Render validation results beneath metadata."""
+        self.validation_table.setRowCount(len(entries))
+        severity_colors = {
+            "ok": "#c8e6c9",  # green
+            "warning": "#fff9c4",  # yellow
+            "error": "#ffcdd2",  # red
+            "fatal": "#ff8a80",  # bright red
+            "info": "#e0e0e0",  # gray
+        }
+
+        for row, entry in enumerate(entries):
+            check_item = QTableWidgetItem(entry.get("check", ""))
+            result_item = QTableWidgetItem(entry.get("result", ""))
+            details_item = QTableWidgetItem(entry.get("details", ""))
+
+            severity = entry.get("severity", "ok")
+            color = QColor(severity_colors.get(severity, "#ffffff"))
+            for item in (check_item, result_item, details_item):
+                item.setBackground(color)
+
+            self.validation_table.setItem(row, 0, check_item)
+            self.validation_table.setItem(row, 1, result_item)
+            self.validation_table.setItem(row, 2, details_item)
+
+        self.validation_group.setVisible(True)
+
+    def _on_validate_file(self) -> None:
+        """Handle validation trigger."""
+        if not self._current_file:
+            return
+
+        main_window = self.window()
+        if hasattr(main_window, "validate_file"):
+            main_window.validate_file(self._current_file)
