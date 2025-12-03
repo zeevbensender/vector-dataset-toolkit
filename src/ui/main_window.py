@@ -869,9 +869,15 @@ class MainWindow(QMainWindow):
         self.progress_label.setText("Wrapping…")
         self.progress_bar.setValue(0)
 
+        log_cb = lambda msg: (
+            self.log(msg),
+            self.wrap_view.append_log(msg),
+        )
+
         wrapper = HDF5Wrapper(
             chunk_size=options.get("chunk_size", 10000),
             progress_callback=None,
+            log_callback=log_cb,
         )
         self._cancel_callback = wrapper.cancel
 
