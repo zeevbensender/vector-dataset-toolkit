@@ -289,6 +289,10 @@ class HDF5Wrapper:
                     self._log("Copying neighbor indices into HDF5 dataset")
                     ibin_reader = IBINReader(ibin_path)
                     neighbor_chunk_idx = 0
+                    # To keep memory bounded when computing distances, split each
+                    # neighbors chunk into smaller sub-batches sized to roughly
+                    # fit in a fixed memory budget.
+                    distance_mem_budget = 256 * 1024 * 1024  # 256MB
                     for chunk in ibin_reader.read_sequential(chunk_size=self.chunk_size):
                         if self._cancelled:
                             raise RuntimeError("Wrap cancelled")
@@ -302,36 +306,43 @@ class HDF5Wrapper:
                         if distances_ds is not None:
                             query_chunk = query_ds[neighbor_written:end]
 
+                            # Size sub-batches so that (sub_batch_size * k * dimension * 4)
+                            # stays under the memory budget when loading unique vectors.
+                            max_sub_batch = max(
+                                1, distance_mem_budget // max(1, k * dimension * 4)
+                            )
+                            sub_batch_size = min(len(chunk), max_sub_batch)
+
                             self._log(
                                 f"Computing distances for chunk {neighbor_chunk_idx} with "
-                                f"{len(chunk)} queries and {chunk.shape[1]} neighbors"
+                                f"{len(chunk)} queries (sub-batch size {sub_batch_size})"
                             )
 
-                            # h5py fancy indexing requires monotonically increasing
-                            # indices. Fetch unique neighbors in sorted order and
-                            # broadcast back to each query row to compute distances
-                            # without per-row loops (which are prohibitively slow at
-                            # large scale).
-                            unique_neighbors, inverse = np.unique(
-                                chunk, return_inverse=True
-                            )
-                            self._log(
-                                f"Chunk {neighbor_chunk_idx}: {len(unique_neighbors)} unique neighbors"
-                            )
-                            unique_vectors = base_ds[unique_neighbors]
+                            for sub_start in range(0, len(chunk), sub_batch_size):
+                                sub_end = min(sub_start + sub_batch_size, len(chunk))
+                                sub_neighbors = chunk[sub_start:sub_end]
+                                sub_queries = query_chunk[sub_start:sub_end]
 
-                            # inverse maps each flattened neighbor position back to
-                            # the corresponding unique vector. Reshape to align with
-                            # the original chunk layout.
-                            expanded_vectors = unique_vectors[inverse].reshape(
-                                chunk.shape + (dimension,)
-                            )
+                                unique_neighbors, inverse = np.unique(
+                                    sub_neighbors, return_inverse=True
+                                )
+                                self._log(
+                                    "Chunk "
+                                    f"{neighbor_chunk_idx} sub-batch {sub_start}-{sub_end}: "
+                                    f"{len(unique_neighbors)} unique neighbors"
+                                )
 
-                            distances = np.linalg.norm(
-                                expanded_vectors - query_chunk[:, None, :], axis=2
-                            ).astype(np.float32)
+                                unique_vectors = base_ds[unique_neighbors]
 
-                            distances_ds[neighbor_written:end] = distances
+                                expanded_vectors = unique_vectors[inverse].reshape(
+                                    sub_neighbors.shape + (dimension,)
+                                )
+
+                                distances = np.linalg.norm(
+                                    expanded_vectors - sub_queries[:, None, :], axis=2
+                                ).astype(np.float32)
+
+                                distances_ds[neighbor_written + sub_start : neighbor_written + sub_end] = distances
 
                             self._log(
                                 f"Finished distances for chunk {neighbor_chunk_idx} "
