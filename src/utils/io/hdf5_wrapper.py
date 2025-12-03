@@ -218,9 +218,13 @@ class HDF5Wrapper:
                 self._log("Copying base/train vectors into HDF5 datasets")
                 for fbin_path in base_fbin_paths:
                     reader = FBINReader(fbin_path)
+                    self._log(f"Reading base shard {Path(fbin_path).name}")
                     for chunk in reader.read_sequential(chunk_size=self.chunk_size):
                         if self._cancelled:
                             raise RuntimeError("Wrap cancelled")
+                        self._log(
+                            f"Writing base vectors {base_written}–{base_written + len(chunk)}"
+                        )
                         end = base_written + len(chunk)
                         base_ds[base_written:end] = chunk
                         base_written = end
@@ -247,6 +251,9 @@ class HDF5Wrapper:
                 for chunk in query_reader.read_sequential(chunk_size=self.chunk_size):
                     if self._cancelled:
                         raise RuntimeError("Wrap cancelled")
+                    self._log(
+                        f"Writing query vectors {query_written}–{query_written + len(chunk)}"
+                    )
                     end = query_written + len(chunk)
                     query_ds[query_written:end] = chunk
                     query_written = end
@@ -281,14 +288,24 @@ class HDF5Wrapper:
 
                     self._log("Copying neighbor indices into HDF5 dataset")
                     ibin_reader = IBINReader(ibin_path)
+                    neighbor_chunk_idx = 0
                     for chunk in ibin_reader.read_sequential(chunk_size=self.chunk_size):
                         if self._cancelled:
                             raise RuntimeError("Wrap cancelled")
+                        self._log(
+                            "Processing neighbor chunk "
+                            f"{neighbor_chunk_idx} (rows {neighbor_written}–{neighbor_written + len(chunk)})"
+                        )
                         end = neighbor_written + len(chunk)
                         neighbors_ds[neighbor_written:end] = chunk
 
                         if distances_ds is not None:
                             query_chunk = query_ds[neighbor_written:end]
+
+                            self._log(
+                                f"Computing distances for chunk {neighbor_chunk_idx} with "
+                                f"{len(chunk)} queries and {chunk.shape[1]} neighbors"
+                            )
 
                             # h5py fancy indexing requires monotonically increasing
                             # indices. Fetch unique neighbors in sorted order and
@@ -297,6 +314,9 @@ class HDF5Wrapper:
                             # large scale).
                             unique_neighbors, inverse = np.unique(
                                 chunk, return_inverse=True
+                            )
+                            self._log(
+                                f"Chunk {neighbor_chunk_idx}: {len(unique_neighbors)} unique neighbors"
                             )
                             unique_vectors = base_ds[unique_neighbors]
 
@@ -313,7 +333,13 @@ class HDF5Wrapper:
 
                             distances_ds[neighbor_written:end] = distances
 
+                            self._log(
+                                f"Finished distances for chunk {neighbor_chunk_idx} "
+                                f"({neighbor_written}–{end})"
+                            )
+
                         neighbor_written = end
+                        neighbor_chunk_idx += 1
                         self._report_progress(base_written + query_written + neighbor_written, total_steps)
                     ibin_reader.close()
 
