@@ -218,9 +218,13 @@ class HDF5Wrapper:
                 self._log("Copying base/train vectors into HDF5 datasets")
                 for fbin_path in base_fbin_paths:
                     reader = FBINReader(fbin_path)
+                    self._log(f"Reading base shard {Path(fbin_path).name}")
                     for chunk in reader.read_sequential(chunk_size=self.chunk_size):
                         if self._cancelled:
                             raise RuntimeError("Wrap cancelled")
+                        self._log(
+                            f"Writing base vectors {base_written}–{base_written + len(chunk)}"
+                        )
                         end = base_written + len(chunk)
                         base_ds[base_written:end] = chunk
                         base_written = end
@@ -247,6 +251,9 @@ class HDF5Wrapper:
                 for chunk in query_reader.read_sequential(chunk_size=self.chunk_size):
                     if self._cancelled:
                         raise RuntimeError("Wrap cancelled")
+                    self._log(
+                        f"Writing query vectors {query_written}–{query_written + len(chunk)}"
+                    )
                     end = query_written + len(chunk)
                     query_ds[query_written:end] = chunk
                     query_written = end
@@ -254,6 +261,7 @@ class HDF5Wrapper:
                 query_reader.close()
 
                 neighbors_ds = None
+                distances_ds = None
                 if ibin_path and k:
                     neighbor_chunks = (min(self.chunk_size, query_vectors), k)
                     neighbors_ds = h5.create_dataset(
@@ -267,14 +275,111 @@ class HDF5Wrapper:
                     neighbors_ds.attrs["k"] = k
                     neighbors_ds.attrs["source_files"] = [str(Path(ibin_path))]
 
+                    distances_ds = h5.create_dataset(
+                        "distances",
+                        shape=(query_vectors, k),
+                        dtype=np.float32,
+                        chunks=neighbor_chunks,
+                        compression=compression,
+                    )
+                    distances_ds.attrs["vector_count"] = query_vectors
+                    distances_ds.attrs["k"] = k
+                    distances_ds.attrs["source_files"] = [str(Path(ibin_path))]
+
                     self._log("Copying neighbor indices into HDF5 dataset")
                     ibin_reader = IBINReader(ibin_path)
+                    neighbor_chunk_idx = 0
+                    # To keep memory bounded when computing distances, split each
+                    # neighbors chunk into smaller sub-batches sized to roughly
+                    # fit in a fixed memory budget.
+                    distance_mem_budget = 256 * 1024 * 1024  # 256MB
                     for chunk in ibin_reader.read_sequential(chunk_size=self.chunk_size):
                         if self._cancelled:
                             raise RuntimeError("Wrap cancelled")
+                        self._log(
+                            "Processing neighbor chunk "
+                            f"{neighbor_chunk_idx} (rows {neighbor_written}–{neighbor_written + len(chunk)})"
+                        )
                         end = neighbor_written + len(chunk)
                         neighbors_ds[neighbor_written:end] = chunk
+
+                        if distances_ds is not None:
+                            query_chunk = query_ds[neighbor_written:end]
+
+                            # Size sub-batches so that (sub_batch_size * k * dimension * 4)
+                            # stays under the memory budget when loading unique vectors.
+                            max_sub_batch = max(
+                                1, distance_mem_budget // max(1, k * dimension * 4)
+                            )
+                            sub_batch_size = min(len(chunk), max_sub_batch)
+
+                            self._log(
+                                f"Computing distances for chunk {neighbor_chunk_idx} with "
+                                f"{len(chunk)} queries (sub-batch size {sub_batch_size})"
+                            )
+
+                            for sub_start in range(0, len(chunk), sub_batch_size):
+                                sub_end = min(sub_start + sub_batch_size, len(chunk))
+                                sub_neighbors = chunk[sub_start:sub_end]
+                                sub_queries = query_chunk[sub_start:sub_end]
+
+                                unique_neighbors, inverse = np.unique(
+                                    sub_neighbors, return_inverse=True
+                                )
+                                self._log(
+                                    "Chunk "
+                                    f"{neighbor_chunk_idx} sub-batch {sub_start}-{sub_end}: "
+                                    f"{len(unique_neighbors)} unique neighbors"
+                                )
+
+                                # Process unique neighbors in smaller slices to avoid
+                                # allocating a single massive list of vectors.
+                                max_unique_batch = max(
+                                    1, distance_mem_budget // max(1, dimension * 4)
+                                )
+                                distances = np.empty(
+                                    sub_neighbors.shape, dtype=np.float32
+                                )
+
+                                for uniq_start in range(
+                                    0, len(unique_neighbors), max_unique_batch
+                                ):
+                                    uniq_end = min(
+                                        uniq_start + max_unique_batch, len(unique_neighbors)
+                                    )
+                                    uniq_ids = unique_neighbors[uniq_start:uniq_end]
+                                    uniq_vectors = base_ds[uniq_ids]
+
+                                    mask = (inverse >= uniq_start) & (inverse < uniq_end)
+                                    if not mask.any():
+                                        continue
+
+                                    query_idx, neighbor_idx = np.nonzero(mask)
+                                    local_inverse = inverse[mask] - uniq_start
+
+                                    selected_vectors = uniq_vectors[local_inverse]
+                                    selected_queries = sub_queries[query_idx]
+
+                                    distances[query_idx, neighbor_idx] = np.linalg.norm(
+                                        selected_vectors - selected_queries, axis=1
+                                    ).astype(np.float32)
+
+                                    self._log(
+                                        f"Chunk {neighbor_chunk_idx} sub-batch {sub_start}-{sub_end}: "
+                                        f"processed unique neighbors {uniq_start}-{uniq_end}"
+                                    )
+
+                                distances_ds[
+                                    neighbor_written + sub_start : neighbor_written + sub_end
+                                ] = distances
+
+                            self._log(
+                                f"Finished distances for chunk {neighbor_chunk_idx} "
+                                f"({neighbor_written}–{end})"
+                            )
+
                         neighbor_written = end
+                        neighbor_chunk_idx += 1
                         self._report_progress(base_written + query_written + neighbor_written, total_steps)
                     ibin_reader.close()
 
