@@ -28,10 +28,11 @@ def _load_window_icon() -> QIcon:
     except Exception:
         resources_rc = None
 
-    for candidate in (":/icons/vector_dataset_tool.png", ":/icons/vector_dataset_tool.svg"):
-        icon = QIcon(candidate)
-        if not icon.isNull():
-            return icon
+    if resources_rc:
+        for candidate in (":/icons/vector_dataset_tool.png", ":/icons/vector_dataset_tool.svg"):
+            icon = QIcon(candidate)
+            if not icon.isNull():
+                return icon
 
     icons_dir = Path(__file__).resolve().parent.parent / "resources" / "icons"
     for filename in ("vector_dataset_tool.png", "vector_dataset_tool.svg"):
