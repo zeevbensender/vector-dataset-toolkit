@@ -33,6 +33,7 @@ from ..utils.io import (
     NPYReader,
     ShardMerger,
 )
+from ..utils.validator import FileValidator
 from ..views.converter_view import ConverterView
 from ..views.inspector_view import InspectorView
 from ..views.logs_view import LogsView
@@ -55,7 +56,10 @@ class MainWindow(QMainWindow):
         self._worker_manager = WorkerManager()
         self._current_worker: Worker | None = None
         self._current_reader: Any = None
+        self._current_metadata: dict | None = None
+        self._current_file_path: str | None = None
         self._cancel_callback: callable | None = None
+        self._post_scan_action: str | None = None
 
         self._setup_ui()
         self._connect_signals()
@@ -220,6 +224,8 @@ class MainWindow(QMainWindow):
             self.inspector_view._current_file = file_path
             self.inspector_view.file_label.setText(file_path)
             self.inspector_view.scan_btn.setEnabled(True)
+            self.inspector_view.validate_btn.setEnabled(True)
+            self._current_metadata = None
             self.scan_file(file_path)
 
     def _on_refresh(self) -> None:
@@ -253,6 +259,7 @@ class MainWindow(QMainWindow):
         self.log(f"Scanning file: {file_path}")
         self.progress_label.setText("Scanning...")
         self.progress_bar.setRange(0, 0)  # Indeterminate
+        self._current_file_path = file_path
 
         def do_scan(progress_callback=None) -> dict:
             path = Path(file_path)
@@ -291,18 +298,26 @@ class MainWindow(QMainWindow):
         
         self._current_reader = result["reader"]
         metadata = result["metadata"]
-        
+        self._current_metadata = metadata
+
         self.inspector_view.display_metadata(metadata)
         self.inspector_view.set_reader(self._current_reader)
         self.log(f"File scanned successfully: {metadata.get('vector_count', 'N/A')} vectors")
         self.status_bar.showMessage("File scanned successfully")
+
+        if self._post_scan_action == "validate" and self._current_file_path == self.inspector_view._current_file:
+            self._post_scan_action = None
+            self._start_validation(self._current_file_path or "")
 
     def _on_scan_error(self, error: Exception, traceback_str: str) -> None:
         """Handle scan error."""
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_label.setText("Error")
-        
+        self._current_metadata = None
+        self._current_reader = None
+        self._post_scan_action = None
+
         self.log(f"Error scanning file: {error}", "ERROR")
         self.status_bar.showMessage(f"Error: {error}")
         QMessageBox.critical(self, "Scan Error", f"Failed to scan file:\n{error}")
@@ -349,6 +364,115 @@ class MainWindow(QMainWindow):
             on_result=self._on_sample_complete,
             on_error=self._on_sample_error,
         )
+
+    def validate_file(self, file_path: str) -> None:
+        """Run validation for the provided file, auto-scanning metadata if needed."""
+        if not file_path:
+            return
+
+        if (
+            self._current_metadata is None
+            or self._current_file_path != file_path
+            or self._current_reader is None
+        ):
+            self._post_scan_action = "validate"
+            self.scan_file(file_path)
+            return
+
+        self._start_validation(file_path)
+
+    def _start_validation(self, file_path: str) -> None:
+        """Internal helper to launch validation worker."""
+        self.log(f"Validating file: {file_path}")
+        self.progress_label.setText("Validating...")
+        self.progress_bar.setValue(0)
+        self._post_scan_action = None
+        self.inspector_view.set_validation_running(True)
+
+        def do_validate(progress_callback=None):
+            validator = FileValidator(progress_callback=progress_callback)
+            report = validator.validate(file_path, metadata=self._current_metadata)
+            entries = [
+                {**entry.to_dict(), "severity": entry.severity}
+                for entry in report.entries
+            ]
+            log_level = {
+                "fatal": "ERROR",
+                "error": "ERROR",
+                "warning": "WARNING",
+                "info": "INFO",
+                "ok": "INFO",
+            }
+            entry_logs = [
+                (
+                    f"[{item['severity'].upper()}] {item['check']}: {item['result']} - {item['details']}",
+                    log_level.get(item["severity"], "INFO"),
+                )
+                for item in entries
+            ]
+            return {
+                "report": report.to_dict(),
+                "entries": entries,
+                "logs": report.logs + entry_logs,
+            }
+
+        self._current_worker = self._worker_manager.run_task(
+            do_validate,
+            on_progress=self._on_validation_progress,
+            on_result=self._on_validation_complete,
+            on_error=self._on_validation_error,
+        )
+
+    def _on_validation_progress(self, current: int, total: int) -> None:
+        if total > 0:
+            percent = int((current / total) * 100)
+            self.progress_bar.setValue(percent)
+            self.progress_label.setText(f"Validating... {percent}%")
+
+    def _on_validation_complete(self, result: dict) -> None:
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Ready")
+        self.inspector_view.set_validation_running(False)
+
+        entries = result.get("entries", [])
+        self.inspector_view.display_validation_results(entries)
+
+        report = result.get("report", {})
+        fatal_entries = report.get("fatal", [])
+        error_entries = report.get("errors", [])
+        warning_entries = report.get("warnings", [])
+
+        summary = (
+            "Validation complete: "
+            f"{len(report.get('passed', []))} ok, "
+            f"{len(warning_entries)} warnings, "
+            f"{len(error_entries)} errors, "
+            f"{len(fatal_entries)} fatal"
+        )
+        level = "ERROR" if fatal_entries or error_entries else (
+            "WARNING" if warning_entries else "INFO"
+        )
+        self.log(summary, level)
+        for message, msg_level in result.get("logs", []):
+            self.logs_view.append_log(message, msg_level)
+
+        if fatal_entries:
+            details = fatal_entries[0].get("details", "Fatal validation issues detected")
+            QMessageBox.critical(self, "Validation failed", details)
+            self.status_bar.showMessage("Validation failed")
+        else:
+            self.status_bar.showMessage("Validation complete")
+
+    def _on_validation_error(self, error: Exception, traceback_str: str) -> None:
+        self.inspector_view.set_validation_running(False)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Error")
+        self._post_scan_action = None
+
+        self.log(f"Validation error: {error}", "ERROR")
+        self.logs_view.append_log(traceback_str, "ERROR")
+        self.status_bar.showMessage(f"Validation error: {error}")
+        QMessageBox.critical(self, "Validation Error", str(error))
 
     def _on_sample_complete(self, result) -> None:
         """Handle sample completion."""
