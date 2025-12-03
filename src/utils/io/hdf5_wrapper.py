@@ -289,22 +289,28 @@ class HDF5Wrapper:
 
                         if distances_ds is not None:
                             query_chunk = query_ds[neighbor_written:end]
-                            distances = np.empty((len(chunk), k), dtype=np.float32)
-                            for i, neighbor_row in enumerate(chunk):
-                                # h5py requires fancy-index selections to be in
-                                # monotonically increasing order; IBIN neighbor
-                                # rows are ordered by similarity, not by id. We
-                                # therefore sort indices for the read and then
-                                # restore the original order before computing
-                                # distances.
-                                sorted_idx = np.argsort(neighbor_row, kind="stable")
-                                sorted_neighbors = neighbor_row[sorted_idx]
-                                sorted_vectors = base_ds[sorted_neighbors]
-                                restored_vectors = sorted_vectors[np.argsort(sorted_idx)]
 
-                                distances[i] = np.linalg.norm(
-                                    restored_vectors - query_chunk[i], axis=1
-                                )
+                            # h5py fancy indexing requires monotonically increasing
+                            # indices. Fetch unique neighbors in sorted order and
+                            # broadcast back to each query row to compute distances
+                            # without per-row loops (which are prohibitively slow at
+                            # large scale).
+                            unique_neighbors, inverse = np.unique(
+                                chunk, return_inverse=True
+                            )
+                            unique_vectors = base_ds[unique_neighbors]
+
+                            # inverse maps each flattened neighbor position back to
+                            # the corresponding unique vector. Reshape to align with
+                            # the original chunk layout.
+                            expanded_vectors = unique_vectors[inverse].reshape(
+                                chunk.shape + (dimension,)
+                            )
+
+                            distances = np.linalg.norm(
+                                expanded_vectors - query_chunk[:, None, :], axis=2
+                            ).astype(np.float32)
+
                             distances_ds[neighbor_written:end] = distances
 
                         neighbor_written = end
