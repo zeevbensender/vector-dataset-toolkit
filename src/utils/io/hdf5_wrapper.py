@@ -332,17 +332,46 @@ class HDF5Wrapper:
                                     f"{len(unique_neighbors)} unique neighbors"
                                 )
 
-                                unique_vectors = base_ds[unique_neighbors]
-
-                                expanded_vectors = unique_vectors[inverse].reshape(
-                                    sub_neighbors.shape + (dimension,)
+                                # Process unique neighbors in smaller slices to avoid
+                                # allocating a single massive list of vectors.
+                                max_unique_batch = max(
+                                    1, distance_mem_budget // max(1, dimension * 4)
+                                )
+                                distances = np.empty(
+                                    sub_neighbors.shape, dtype=np.float32
                                 )
 
-                                distances = np.linalg.norm(
-                                    expanded_vectors - sub_queries[:, None, :], axis=2
-                                ).astype(np.float32)
+                                for uniq_start in range(
+                                    0, len(unique_neighbors), max_unique_batch
+                                ):
+                                    uniq_end = min(
+                                        uniq_start + max_unique_batch, len(unique_neighbors)
+                                    )
+                                    uniq_ids = unique_neighbors[uniq_start:uniq_end]
+                                    uniq_vectors = base_ds[uniq_ids]
 
-                                distances_ds[neighbor_written + sub_start : neighbor_written + sub_end] = distances
+                                    mask = (inverse >= uniq_start) & (inverse < uniq_end)
+                                    if not mask.any():
+                                        continue
+
+                                    query_idx, neighbor_idx = np.nonzero(mask)
+                                    local_inverse = inverse[mask] - uniq_start
+
+                                    selected_vectors = uniq_vectors[local_inverse]
+                                    selected_queries = sub_queries[query_idx]
+
+                                    distances[query_idx, neighbor_idx] = np.linalg.norm(
+                                        selected_vectors - selected_queries, axis=1
+                                    ).astype(np.float32)
+
+                                    self._log(
+                                        f"Chunk {neighbor_chunk_idx} sub-batch {sub_start}-{sub_end}: "
+                                        f"processed unique neighbors {uniq_start}-{uniq_end}"
+                                    )
+
+                                distances_ds[
+                                    neighbor_written + sub_start : neighbor_written + sub_end
+                                ] = distances
 
                             self._log(
                                 f"Finished distances for chunk {neighbor_chunk_idx} "
