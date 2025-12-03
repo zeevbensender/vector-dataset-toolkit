@@ -291,9 +291,19 @@ class HDF5Wrapper:
                             query_chunk = query_ds[neighbor_written:end]
                             distances = np.empty((len(chunk), k), dtype=np.float32)
                             for i, neighbor_row in enumerate(chunk):
-                                base_vectors = base_ds[neighbor_row]
+                                # h5py requires fancy-index selections to be in
+                                # monotonically increasing order; IBIN neighbor
+                                # rows are ordered by similarity, not by id. We
+                                # therefore sort indices for the read and then
+                                # restore the original order before computing
+                                # distances.
+                                sorted_idx = np.argsort(neighbor_row, kind="stable")
+                                sorted_neighbors = neighbor_row[sorted_idx]
+                                sorted_vectors = base_ds[sorted_neighbors]
+                                restored_vectors = sorted_vectors[np.argsort(sorted_idx)]
+
                                 distances[i] = np.linalg.norm(
-                                    base_vectors - query_chunk[i], axis=1
+                                    restored_vectors - query_chunk[i], axis=1
                                 )
                             distances_ds[neighbor_written:end] = distances
 
