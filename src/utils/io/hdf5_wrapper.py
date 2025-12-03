@@ -254,6 +254,7 @@ class HDF5Wrapper:
                 query_reader.close()
 
                 neighbors_ds = None
+                distances_ds = None
                 if ibin_path and k:
                     neighbor_chunks = (min(self.chunk_size, query_vectors), k)
                     neighbors_ds = h5.create_dataset(
@@ -267,6 +268,17 @@ class HDF5Wrapper:
                     neighbors_ds.attrs["k"] = k
                     neighbors_ds.attrs["source_files"] = [str(Path(ibin_path))]
 
+                    distances_ds = h5.create_dataset(
+                        "distances",
+                        shape=(query_vectors, k),
+                        dtype=np.float32,
+                        chunks=neighbor_chunks,
+                        compression=compression,
+                    )
+                    distances_ds.attrs["vector_count"] = query_vectors
+                    distances_ds.attrs["k"] = k
+                    distances_ds.attrs["source_files"] = [str(Path(ibin_path))]
+
                     self._log("Copying neighbor indices into HDF5 dataset")
                     ibin_reader = IBINReader(ibin_path)
                     for chunk in ibin_reader.read_sequential(chunk_size=self.chunk_size):
@@ -274,6 +286,17 @@ class HDF5Wrapper:
                             raise RuntimeError("Wrap cancelled")
                         end = neighbor_written + len(chunk)
                         neighbors_ds[neighbor_written:end] = chunk
+
+                        if distances_ds is not None:
+                            query_chunk = query_ds[neighbor_written:end]
+                            distances = np.empty((len(chunk), k), dtype=np.float32)
+                            for i, neighbor_row in enumerate(chunk):
+                                base_vectors = base_ds[neighbor_row]
+                                distances[i] = np.linalg.norm(
+                                    base_vectors - query_chunk[i], axis=1
+                                )
+                            distances_ds[neighbor_written:end] = distances
+
                         neighbor_written = end
                         self._report_progress(base_written + query_written + neighbor_written, total_steps)
                     ibin_reader.close()
