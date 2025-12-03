@@ -1,11 +1,14 @@
 """Settings view placeholder for application settings."""
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -14,6 +17,8 @@ from PySide6.QtWidgets import (
 
 class SettingsView(QWidget):
     """View for application settings."""
+
+    settings_reset_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -74,12 +79,27 @@ class SettingsView(QWidget):
 
         layout.addWidget(log_group)
 
+        # Reset button
+        reset_btn = QPushButton("Reset All Settings to Default")
+        reset_btn.setStyleSheet("color: red;")
+        reset_btn.clicked.connect(self._on_reset_clicked)
+        layout.addWidget(reset_btn)
+
         layout.addStretch()
 
-        # Note
-        note = QLabel(
-            "Note: Settings persistence will be implemented in a future milestone."
-        )
+        note = QLabel("Reset clears window layout, last directories, and UI state.")
         note.setWordWrap(True)
         note.setStyleSheet("color: gray;")
         layout.addWidget(note)
+
+    def _on_reset_clicked(self) -> None:
+        """Confirm and emit a settings reset request."""
+
+        answer = QMessageBox.question(
+            self,
+            "Reset Settings",
+            "Are you sure you want to reset all application settings?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.settings_reset_requested.emit()

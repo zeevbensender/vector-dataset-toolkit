@@ -24,23 +24,32 @@ from PySide6.QtWidgets import (
 )
 
 
+from ..utils.settings import SettingsManager
+
+
 class UnwrapView(QWidget):
     """Panel that extracts datasets from HDF5 files into FBIN/IBIN outputs."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings_manager: SettingsManager | None = None,
+    ) -> None:
         super().__init__(parent)
         self._current_scan: dict[str, Any] | None = None
+        self._settings = settings_manager
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._create_left_panel())
-        splitter.addWidget(self._create_right_panel())
-        splitter.setSizes([460, 480])
-        layout.addWidget(splitter)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self._create_left_panel())
+        self.splitter.addWidget(self._create_right_panel())
+        self.splitter.setSizes([460, 480])
+        layout.addWidget(self.splitter)
 
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
@@ -135,10 +144,11 @@ class UnwrapView(QWidget):
         return panel
 
     def _on_browse_input(self) -> None:
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select HDF5 File",
-            "",
+            start_dir,
             "HDF5 Files (*.h5 *.hdf5)",
         )
         if file_path:
@@ -146,11 +156,18 @@ class UnwrapView(QWidget):
             self.extract_btn.setEnabled(False)
             self.meta_table.setRowCount(0)
             self.summary_text.clear()
+            if self._settings:
+                self._settings.update_last_directory(file_path)
 
     def _on_browse_output(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Output Directory", start_dir
+        )
         if directory:
             self.output_dir.setText(directory)
+            if self._settings:
+                self._settings.update_last_directory(directory)
 
     def _on_scan(self) -> None:
         if not self.input_path.text():

@@ -21,11 +21,20 @@ from PySide6.QtWidgets import (
 )
 
 
+from ..utils.settings import SettingsManager
+
+
 class ConverterView(QWidget):
     """View for converting between vector dataset formats."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings_manager: SettingsManager | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._settings = settings_manager
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -33,18 +42,18 @@ class ConverterView(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left panel - input/settings
         left_panel = self._create_left_panel()
-        splitter.addWidget(left_panel)
+        self.splitter.addWidget(left_panel)
 
         # Right panel - output/progress
         right_panel = self._create_right_panel()
-        splitter.addWidget(right_panel)
+        self.splitter.addWidget(right_panel)
 
-        splitter.setSizes([400, 500])
-        layout.addWidget(splitter)
+        self.splitter.setSizes([400, 500])
+        layout.addWidget(self.splitter)
 
     def _create_left_panel(self) -> QWidget:
         """Create the left panel with conversion settings."""
@@ -177,10 +186,11 @@ class ConverterView(QWidget):
 
     def _on_browse_input(self) -> None:
         """Handle input file browsing."""
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Input File",
-            "",
+            start_dir,
             "All Supported Files (*.npy *.h5 *.hdf5 *.fbin);;NPY Files (*.npy);;HDF5 Files (*.h5 *.hdf5);;FBIN Files (*.fbin)"
         )
         if file_path:
@@ -190,6 +200,8 @@ class ConverterView(QWidget):
             self.input_format_label.setText(f"Format: {format_name}")
             self._update_convert_state()
             self._update_output_format_options(format_name)
+            if self._settings:
+                self._settings.update_last_directory(file_path)
 
     def _on_browse_output(self) -> None:
         """Handle output file browsing."""
@@ -202,11 +214,12 @@ class ConverterView(QWidget):
         }
         ext = ext_map.get(index, ".h5")
         filter_text = filter_map.get(index, "HDF5 Files (*.h5)")
-        
+
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Select Output File",
-            "",
+            start_dir,
             filter_text
         )
         if file_path:
@@ -215,6 +228,8 @@ class ConverterView(QWidget):
                 file_path += ext
             self.output_path.setText(file_path)
             self._update_convert_state()
+            if self._settings:
+                self._settings.update_last_directory(file_path)
 
     def _on_format_changed(self) -> None:
         """Handle output format change."""

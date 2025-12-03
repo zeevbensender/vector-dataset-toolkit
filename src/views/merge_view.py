@@ -28,6 +28,9 @@ from PySide6.QtWidgets import (
 )
 
 
+from ..utils.settings import SettingsManager
+
+
 class MergeView(QWidget):
     """View for merging FBIN shard files.
     
@@ -40,11 +43,17 @@ class MergeView(QWidget):
     - Progress and log display
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings_manager: SettingsManager | None = None,
+    ) -> None:
         super().__init__(parent)
         self._shard_paths: list[str] = []
         self._shard_infos: list[dict[str, Any]] = []
         self._preview_result: dict[str, Any] | None = None
+        self._settings = settings_manager
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -52,18 +61,18 @@ class MergeView(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left panel - shard list and controls
         left_panel = self._create_left_panel()
-        splitter.addWidget(left_panel)
+        self.splitter.addWidget(left_panel)
 
         # Right panel - preview, progress, logs
         right_panel = self._create_right_panel()
-        splitter.addWidget(right_panel)
+        self.splitter.addWidget(right_panel)
 
-        splitter.setSizes([450, 450])
-        layout.addWidget(splitter)
+        self.splitter.setSizes([450, 450])
+        layout.addWidget(self.splitter)
 
     def _create_left_panel(self) -> QWidget:
         """Create the left panel with shard list and merge options."""
@@ -232,16 +241,19 @@ class MergeView(QWidget):
 
     def _on_add_shards(self) -> None:
         """Handle adding shard files."""
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select FBIN Shard Files",
-            "",
+            start_dir,
             "FBIN Files (*.fbin)"
         )
         if files:
             for file_path in files:
                 if file_path not in self._shard_paths:
                     self._shard_paths.append(file_path)
+                    if self._settings:
+                        self._settings.update_last_directory(file_path)
             self._validate_shards()
 
     def _on_remove_selected(self) -> None:
@@ -324,10 +336,11 @@ class MergeView(QWidget):
         ext = ".fbin" if self.output_format.currentIndex() == 0 else ".npy"
         filter_text = "FBIN Files (*.fbin)" if ext == ".fbin" else "NPY Files (*.npy)"
 
+        start_dir = self._settings.get_last_directory() if self._settings else str(Path.home())
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Select Output File",
-            "",
+            start_dir,
             filter_text
         )
         if file_path:
@@ -335,6 +348,8 @@ class MergeView(QWidget):
                 file_path += ext
             self.output_path.setText(file_path)
             self._update_merge_state()
+            if self._settings:
+                self._settings.update_last_directory(file_path)
 
     def _on_format_changed(self) -> None:
         """Handle output format change."""
@@ -460,10 +475,12 @@ File Size: {result.get('file_size_bytes', 0) / (1024*1024):.2f} MB
         if not self._preview_result:
             return
 
+        start_dir = Path(self._settings.get_last_directory()) if self._settings else Path.home()
+        default_path = start_dir / "merge_preview.json"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Preview as JSON",
-            "merge_preview.json",
+            str(default_path),
             "JSON Files (*.json)"
         )
         if file_path:
@@ -471,6 +488,8 @@ File Size: {result.get('file_size_bytes', 0) / (1024*1024):.2f} MB
                 with open(file_path, "w") as f:
                     json.dump(self._preview_result, f, indent=2, default=str)
                 self.log_text.append(f"Exported preview to {file_path}")
+                if self._settings:
+                    self._settings.update_last_directory(file_path)
             except Exception as e:
                 QMessageBox.warning(self, "Export Error", f"Failed to export: {e}")
 
