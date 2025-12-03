@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file>icons/vector_dataset_tool.svg</file>
+  </qresource>
+</RCC>

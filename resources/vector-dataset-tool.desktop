@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Vector Dataset Tool
+Comment=Inspect and convert vector dataset files
+Exec=vdt
+Icon=vector_dataset_tool
+Terminal=false
+Type=Application
+Categories=Utility;Science;
+StartupWMClass=Vector Dataset Tool

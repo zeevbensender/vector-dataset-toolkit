@@ -77,6 +77,22 @@ python -m src.app
 
 ---
 
+## 🎨 Application Icon
+
+- The repository ships a vector-first icon at `resources/icons/vector_dataset_tool.svg` to avoid committing binary assets.
+- Generated PNG/ICO/ICNS files and the compiled Qt resource module are ignored by git; create them locally when needed:
+
+  ```bash
+  python tools/generate_icons.py --source docs/milestones/vector_dataset_tool.png
+  pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
+  ```
+
+- At runtime the app loads the Qt resource module when available and otherwise falls back to the tracked SVG on disk.
+- Packaging commands should run the generator first, for example: `pyinstaller --name "VectorDatasetToolkit" --icon resources/icons/vector_dataset_tool.ico src/app.py`.
+- Optional Linux desktop entry installer: `tools/install_desktop_entry.sh` (expects the generated `vector_dataset_tool_256x256.png`).
+
+---
+
 ## 💡 Contributing
 
 Contributions, ideas, and feature requests are welcome.  
